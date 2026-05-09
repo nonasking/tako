@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.python-version
+.pytest_cache/
+
+.claude/
+CLAUDE.md
+CONTEXT.md
+
+_backup_*/
+_backup_*.md
+
+.DS_Store

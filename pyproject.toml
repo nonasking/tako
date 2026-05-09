@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tako"
+version = "0.1.0"
+description = "Jira 티켓 생성 자동화 도구. 셸에서 직접 호출하거나 Claude Code 슬래시 커맨드로 세션 컨텍스트와 함께 사용."
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml>=6.0",
+    "requests>=2.28",
+    "md-to-adf>=1.0",
+]
+
+[project.scripts]
+tako = "tako.main:run"
+
+[tool.setuptools.packages.find]
+include = ["tako*"]
