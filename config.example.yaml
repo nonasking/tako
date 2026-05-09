@@ -1,0 +1,56 @@
+# tako 설정 예시 (수동 작성용)
+#
+# 자동 생성: `tako init` 으로 대화형 마법사 돌리는 게 편함.
+# 수동 작성: 이 파일을 ~/.config/tako/config.yaml 로 복사 후 편집.
+#   mkdir -p ~/.config/tako && cp config.example.yaml ~/.config/tako/config.yaml
+#
+# 인증(이메일/토큰)은 별도 파일 ~/.config/tako/credentials.json (chmod 0600).
+# `tako init` 이 만들어 줌.
+#
+# v1 동작:
+#   - 다중 이슈 타입 (Task/Bug/Story/한국어 커스텀) 셸 인자나 슬래시에서 선택.
+#   - 타입별 입력 필드 차별화 안 함. 모든 타입에 summary/description 만.
+#   - required_fields/optional_fields/template 키는 v1 코드 미사용 (v1.1+ 확장용).
+#   - auto_fill_from_session 은 description 만 v1 활성.
+
+jira:
+  site: mycompany.atlassian.net
+  default_project: PROJ
+  default_issue_type: Task
+
+# 셸 인자(--issue-type) 또는 슬래시에서 다른 타입을 명시하면 그 타입으로 생성.
+# required_fields/optional_fields/template 은 v1.1 확장 포인트.
+issue_types:
+  Task:
+    required_fields: [summary, description]
+    optional_fields: [parent_epic, labels, assignee, story_points]
+    template: |
+      ## 배경
+      {context}
+
+      ## 작업 내용
+      {work_summary}
+
+      ## 완료 조건
+      - [ ]
+
+  Bug:
+    required_fields: [summary, description, priority]
+    optional_fields: [labels, components]
+    template: |
+      ## 재현 절차
+      ## 예상 동작
+      ## 실제 동작
+
+  # Story, Sub-task, 한국어 커스텀 타입도 동일 형식. v1 코드는 키 이름만 읽음.
+
+# 세션 컨텍스트 있을 때 자동 채울 필드.
+auto_fill_from_session:
+  summary: true
+  description: true
+  labels: false
+
+# 부모 에픽 별칭 — 셸 --parent infra / 슬래시에서 짧게 부르려고.
+epic_aliases:
+  infra: PROJ-100
+  refactor: PROJ-201
