@@ -87,6 +87,25 @@ tako fields set story_points customfield_10016
 
 LLM 이 세션 내용을 요약 → 미리보기 → 확인 후 `tako new` 호출. 세션 컨텍스트 없을 때는 모드 A 가 더 가볍다.
 
+### C) 기존 티켓 ↔ 세션 작업 검토 (`/tako-check`)
+
+```
+/tako-check WL-8876
+```
+
+세션에서 한 작업이 그 티켓의 명세를 얼마나 충족하는지 LLM 이 대조해서 보고. 셸에서 직접 조회만 하려면:
+
+```bash
+tako show WL-8876                  # 사람 친화 텍스트
+tako show WL-8876 --json           # 원본 JSON (자동화·LLM 용)
+tako show https://<site>/browse/WL-8876   # URL 도 OK
+tako show WL-8876 --max-comments 0 # 코멘트 제외
+```
+
+`tako show` 가 ADF→마크다운 변환·인증·REST 호출을 모두 처리한다.
+
+> 민감 정보 주의: 티켓 본문이 세션에 노출되므로 토큰·비밀번호 포함 티켓에는 신중히 사용 (v1.x 자동 필터 없음).
+
 ## 부분 호출 (디버깅·자동화)
 
 ```bash
@@ -112,16 +131,20 @@ tako interactive
 
 ```
 tako/
-├── commands/tako.md       슬래시 커맨드 본문
-├── tako/                  Python 패키지
-│   ├── auth.py             credentials 로드
-│   ├── jira_client.py      REST + ADF
-│   ├── issue_draft.py      페이로드 빌더 + 미리보기
-│   ├── prompts.py          인터랙티브 입력
-│   ├── config.py           설정 + init 마법사
-│   └── main.py             진입점
-├── config.example.yaml    설정 예시
-└── install.sh             슬래시 커맨드 등록 (선택)
+├── commands/
+│   ├── tako.md             /tako 슬래시 커맨드
+│   └── tako-check.md       /tako-check 슬래시 커맨드
+├── tako/                   Python 패키지
+│   ├── auth.py              credentials 로드
+│   ├── jira_client.py       REST + ADF 변환 진입점
+│   ├── adf_to_md.py         ADF → 마크다운
+│   ├── issue_draft.py       페이로드 빌더 + 미리보기
+│   ├── fields.py            custom field 매핑 헬퍼
+│   ├── prompts.py           인터랙티브 입력
+│   ├── config.py            설정 + init 마법사
+│   └── main.py              진입점
+├── config.example.yaml     설정 예시
+└── install.sh              슬래시 커맨드 등록 (선택)
 ```
 
 ## 문제 해결
