@@ -56,6 +56,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     new_parser.add_argument("--label", action="append", default=[], help="라벨 (반복 가능)")
     new_parser.add_argument("--story-points", dest="story_points", type=int, help="스토리포인트 (정수)")
     new_parser.add_argument("--duedate", help="기한 YYYY-MM-DD")
+    new_parser.add_argument(
+        "--link",
+        action="append",
+        default=[],
+        help="연결할 티켓 KEY[:TYPE] (반복 가능, TYPE 생략 시 'Relates'). 예: --link WL-100 --link 'WL-200:Blocks'",
+    )
     new_parser.add_argument("--yes", "-y", action="store_true", help="확인 없이 바로 생성")
 
     sub.add_parser("preview", help="stdin JSON → 미리보기 stdout")
@@ -175,6 +181,13 @@ def _collect_interactively(cfg: TakoConfig, *, prefilled: dict[str, Any] | None 
     if duedate is None:
         due_raw = ask_text("기한 YYYY-MM-DD (없으면 Enter)", default="").strip()
         duedate = due_raw if due_raw else None
+    links = pre.get("links")
+    if links is None:
+        link_raw = ask_text(
+            "연결할 티켓 (KEY[:TYPE], 쉼표로 여러 개, 없으면 Enter)",
+            default="",
+        ).strip()
+        links = [s.strip() for s in link_raw.split(",") if s.strip()] if link_raw else []
 
     payload: dict[str, Any] = {
         "project": project,
@@ -190,6 +203,8 @@ def _collect_interactively(cfg: TakoConfig, *, prefilled: dict[str, Any] | None 
         payload["story_points"] = story_points
     if duedate is not None:
         payload["duedate"] = duedate
+    if links:
+        payload["links"] = links
 
     try:
         return IssueDraft.from_payload(payload)
@@ -254,6 +269,8 @@ def _cmd_new(args: argparse.Namespace, cfg: TakoConfig) -> int:
         prefilled["story_points"] = args.story_points
     if args.duedate:
         prefilled["duedate"] = args.duedate
+    if args.link:
+        prefilled["links"] = list(args.link)
 
     needs_interactive = not (args.summary and args.description is not None)
     if needs_interactive and not stdin_is_tty():
@@ -299,8 +316,23 @@ def _cmd_new(args: argparse.Namespace, cfg: TakoConfig) -> int:
         return 2
 
     sys.stderr.write(f"\n생성 완료\n  키:   {result.key}\n  링크: {result.url}\n")
+
+    # 연결 처리 — 이슈는 이미 만들어졌으므로 실패해도 rollback 안 함. 보고만.
+    link_failures: list[tuple[str, str, str]] = []
+    if draft.links:
+        sys.stderr.write("\n연결:\n")
+        for target, type_name in draft.links:
+            try:
+                client.create_issue_link(
+                    type_name=type_name, inward_key=result.key, outward_key=target
+                )
+                sys.stderr.write(f"  [OK]   {type_name} → {target}\n")
+            except JiraApiError as exc:
+                link_failures.append((target, type_name, str(exc)))
+                sys.stderr.write(f"  [실패] {type_name} → {target}  ({exc})\n")
+
     print(result.key)  # stdout 에는 키만
-    return 0
+    return 1 if link_failures else 0
 
 
 _KEY_FROM_URL = re.compile(r"/browse/([A-Z][A-Z0-9_]*-\d+)", re.IGNORECASE)
