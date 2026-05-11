@@ -99,10 +99,12 @@ DESC
   --parent '<부모 키 또는 별칭>' \
   --story-points <정수, 사용자가 명시했을 때만> \
   --duedate <YYYY-MM-DD, 사용자가 명시했을 때만> \
+  --link '<KEY[:TYPE], 사용자가 명시했을 때만, 반복 가능>' \
   --yes
 ```
 
-- `--story-points` / `--duedate` 는 *사용자가 명시적으로 언급*(예: "SP 3", "기한 다음주 금요일") 했을 때만 인자에 포함한다. 세션 맥락에서 추정하지 말 것.
+- `--story-points` / `--duedate` / `--link` 는 *사용자가 명시적으로 언급*(예: "SP 3", "기한 다음주 금요일", "WL-200 이랑 연결") 했을 때만 인자에 포함한다. 세션 맥락에서 추정하지 말 것.
+- `--link` 의 TYPE 은 생략 시 `Relates`. 사용자가 "blocks", "duplicates" 같은 단어를 쓰면 적절한 영문 TYPE 으로 변환 (`Blocks` / `Duplicates` 등).
 - `--yes` 를 붙이는 이유: 미리보기·확인 단계는 *이 슬래시 커맨드가 이미 처리*했으므로 `tako new` 의 자체 확인 단계는 건너뛴다. 두 번 묻지 않는다.
 - description 의 마크다운→ADF 변환은 `tako new` 가 내부적으로 `md-to-adf` 로 처리한다. LLM 이 별도로 변환할 필요는 없다.
 

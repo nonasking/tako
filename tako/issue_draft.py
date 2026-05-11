@@ -11,10 +11,37 @@ from typing import Any
 
 
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_ISSUE_KEY = re.compile(r"^[A-Z][A-Z0-9_]*-\d+$")
+DEFAULT_LINK_TYPE = "Relates"
 
 
 class DraftError(Exception):
     pass
+
+
+def _parse_link_item(item: Any) -> tuple[str, str]:
+    """문자열 'KEY' 또는 'KEY:TYPE' 또는 dict {target, type} 을 (key, type) 으로."""
+    if isinstance(item, dict):
+        target = item.get("target") or item.get("key")
+        type_name = item.get("type") or DEFAULT_LINK_TYPE
+    elif isinstance(item, str):
+        if ":" in item:
+            target, _, type_name = item.partition(":")
+            type_name = type_name.strip() or DEFAULT_LINK_TYPE
+        else:
+            target = item
+            type_name = DEFAULT_LINK_TYPE
+    else:
+        raise DraftError(f"link 항목은 문자열 또는 객체여야 함: {item!r}")
+
+    if not isinstance(target, str) or not target.strip():
+        raise DraftError(f"link target 이 비었음: {item!r}")
+    target = target.strip().upper()
+    if not _ISSUE_KEY.match(target):
+        raise DraftError(f"link target 키 형식 아님: {target!r} (예: WL-1234)")
+    if not isinstance(type_name, str) or not type_name.strip():
+        raise DraftError(f"link type 이 비었음: {item!r}")
+    return target, type_name.strip()
 
 
 @dataclass(frozen=True)
@@ -28,6 +55,9 @@ class IssueDraft:
     assignee: str | None = None
     story_points: int | None = None
     duedate: str | None = None  # YYYY-MM-DD
+    # ((target_key, type_name), ...) — 새 티켓 기준 outward 관계.
+    # 예: (("WL-100", "Relates"), ("WL-200", "Blocks"))
+    links: tuple[tuple[str, str], ...] = ()
 
     @staticmethod
     def from_payload(data: dict[str, Any]) -> IssueDraft:
@@ -65,6 +95,14 @@ class IssueDraft:
                 raise DraftError(f"duedate 는 YYYY-MM-DD 형식: {duedate_raw!r}")
             duedate = duedate_raw.strip()
 
+        links_raw = data.get("links") or []
+        if not isinstance(links_raw, list):
+            raise DraftError("links 는 리스트여야 함.")
+        links: list[tuple[str, str]] = []
+        for item in links_raw:
+            target, type_name = _parse_link_item(item)
+            links.append((target, type_name))
+
         return IssueDraft(
             project=data["project"].strip(),
             issue_type=data["issue_type"].strip(),
@@ -75,6 +113,7 @@ class IssueDraft:
             assignee=(assignee.strip() if assignee else None) or None,
             story_points=story_points,
             duedate=duedate,
+            links=tuple(links),
         )
 
 
@@ -117,6 +156,12 @@ def build_payload(
     meta: dict[str, Any] = {"description_format": "markdown", "source": "tako"}
     if warnings:
         meta["warnings"] = warnings
+    if draft.links:
+        # links 는 fields 에 안 들어감 (Jira REST 의 issueLink 는 별도 API).
+        # 호출자(tako new 또는 슬래시 커맨드)가 본체 생성 후 link 별도 호출.
+        meta["links"] = [
+            {"target": target, "type": type_name} for target, type_name in draft.links
+        ]
 
     return {"payload": {"fields": fields_block}, "meta": meta}
 
@@ -139,6 +184,10 @@ def render_preview(draft: IssueDraft) -> str:
         lines.append(f"SP:      {draft.story_points}")
     if draft.duedate:
         lines.append(f"기한:    {draft.duedate}")
+    if draft.links:
+        lines.append("연결:")
+        for target, type_name in draft.links:
+            lines.append(f"  {type_name} → {target}")
     lines.append("본문:")
     lines.extend(f"  {body_line}" for body_line in draft.description.splitlines() or [""])
     lines.append("-" * 60)

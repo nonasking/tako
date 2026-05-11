@@ -99,6 +99,25 @@ class JiraSiteClient:
         comments = data.get("comments") if isinstance(data, dict) else None
         return comments if isinstance(comments, list) else []
 
+    def create_issue_link(self, *, type_name: str, inward_key: str, outward_key: str) -> None:
+        """POST /rest/api/3/issueLink — 두 이슈 사이 link 생성.
+
+        tako 의 일반 사용 시:
+          inward_key  = 새로 만든 티켓
+          outward_key = 사용자가 지정한 대상 (--link KEY)
+        Jira 가 "<inward> <type> <outward>" 관계로 해석.
+        성공 시 빈 응답(201). 실패면 JiraApiError.
+        """
+        body = {
+            "type": {"name": type_name},
+            "inwardIssue": {"key": inward_key},
+            "outwardIssue": {"key": outward_key},
+        }
+        resp = self._request("POST", "issueLink", json=body)
+        if resp.status_code in (200, 201):
+            return
+        raise JiraApiError(_format_error(resp))
+
 
 def _format_error(resp: requests.Response) -> str:
     code = resp.status_code
