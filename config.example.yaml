@@ -17,6 +17,13 @@ jira:
   site: mycompany.atlassian.net
   default_project: PROJ
   default_issue_type: Task
+  # 사용자 환경의 Jira custom field ID 매핑. 사이트마다 ID 가 다르다.
+  # 본인 사이트 ID 알아내기:
+  #   curl -u "email:token" "https://<site>/rest/api/3/field" \
+  #     | jq '.[] | select(.name | test("Story";"i")) | {id, name}'
+  # 등록 안 해도 tako 동작은 OK. 단 --story-points 같은 옵션은 무시된다.
+  fields:
+    # story_points: customfield_10016
 
 # 셸 인자(--issue-type) 또는 슬래시에서 다른 타입을 명시하면 그 타입으로 생성.
 # required_fields/optional_fields/template 은 v1.1 확장 포인트.
