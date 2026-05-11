@@ -117,6 +117,31 @@ tako show WL-8876 --max-comments 0 # 코멘트 제외
 
 > 민감 정보 주의: 티켓 본문이 세션에 노출되므로 토큰·비밀번호 포함 티켓에는 신중히 사용 (v1.x 자동 필터 없음).
 
+### D) 기존 티켓 본문 업데이트 (`/tako-update`)
+
+```
+/tako-update WL-8876
+```
+
+세션에서 한 작업을 *티켓 본문에 append* (기본). LLM 이 세션 맥락 → 추가될 섹션 자동 작성 → 미리보기 → Y/n → REST. 셸에서 직접:
+
+```bash
+# 기본 append — 본문 끝에 '## 업데이트 (YYYY-MM-DD)' 섹션 추가
+tako update WL-8876 --body "$(cat <<'BODY'
+- 작업 내용 1
+- 작업 내용 2
+BODY
+)" --yes
+
+# 섹션 이름 지정
+tako update WL-8876 --section "진행 상황" --body "..."
+
+# 본문 통째 교체 (위험 — 미리보기에서 신중히)
+tako update WL-8876 --mode overwrite --body "..."
+```
+
+> 본문에 *영구 기록*되므로 민감 정보·실수 주의. 미리보기 단계에서 반드시 검토.
+
 ## 부분 호출 (디버깅·자동화)
 
 ```bash
