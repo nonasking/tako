@@ -10,7 +10,7 @@ SOURCE_DIR="$REPO_ROOT/commands"
 TARGET_DIR="$HOME/.claude/commands"
 
 # 등록할 슬래시 커맨드 파일 목록.
-SOURCES=("tako.md" "tako-check.md")
+SOURCES=("tako.md" "tako-check.md" "tako-update.md")
 
 say() { printf "  %s\n" "$*"; }
 warn() { printf "  [!] %s\n" "$*" >&2; }
@@ -51,7 +51,8 @@ printf "\n다음 단계:\n"
 say "1) 셸 인터랙티브:    tako new"
 say "2) 셸 자동화:        tako new --project ... --issue-type ... --summary ... --description ... --yes"
 say "3) 티켓 조회:        tako show <KEY>"
-say "4) 슬래시 커맨드:    /tako <의도>    또는    /tako-check <KEY>"
+say "4) 본문 업데이트:    tako update <KEY>"
+say "5) 슬래시 커맨드:    /tako <의도>   /tako-check <KEY>   /tako-update <KEY>"
 say ""
 say "패키지/설정 미설치면:"
 say "   cd \"$REPO_ROOT\" && pip install -e . && tako init"
