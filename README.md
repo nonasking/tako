@@ -44,6 +44,7 @@ tako new
 #  부모 (별칭/키, 없으면 Enter):
 #  스토리포인트 (정수, 없으면 Enter):
 #  기한 YYYY-MM-DD (없으면 Enter):
+#  연결할 티켓 (KEY[:TYPE], 쉼표로 여러 개, 없으면 Enter):
 #  → 미리보기 → Jira 에 생성? (Y/n)
 
 # 일부만 미리 지정
@@ -62,10 +63,20 @@ tako new \
 정렬 적용" \
   --story-points 3 \
   --duedate 2026-06-15 \
+  --link WL-100 \
+  --link "WL-200:Blocks" \
   --yes
 ```
 
-`--story-points` / `--duedate` 는 선택. 인터랙티브 모드에서도 빈 입력으로 두면 스킵된다. 스토리포인트를 *실제로 페이로드에 실으려면* config 의 `jira.fields.story_points` 에 사용자 환경의 customfield ID 가 있어야 한다 (없으면 경고 출력 후 SP 만 제외하고 생성). 두 가지 방법:
+`--story-points` / `--duedate` / `--link` 는 선택. 인터랙티브 모드에서도 빈 입력으로 두면 스킵된다.
+
+`--link KEY[:TYPE]` 는 반복 가능. TYPE 생략 시 `Relates` 적용. 흔한 TYPE: `Blocks` / `Relates` / `Duplicates` / `Causes` / `Clones` (사이트마다 다름). 본인 사이트 link types 확인:
+
+```bash
+curl -u "email:token" "https://<site>/rest/api/3/issueLinkType" | jq '.issueLinkTypes[].name'
+```
+
+연결 호출은 *이슈 생성 후 별도 REST*. 이슈 생성은 성공했는데 일부 링크가 실패하면 *티켓은 그대로*, 실패한 링크만 보고하고 종료 코드 1. 스토리포인트를 *실제로 페이로드에 실으려면* config 의 `jira.fields.story_points` 에 사용자 환경의 customfield ID 가 있어야 한다 (없으면 경고 출력 후 SP 만 제외하고 생성). 두 가지 방법:
 
 ```bash
 # 방법 1) 자동 — Jira 에서 후보 찾아서 한 줄로 등록
