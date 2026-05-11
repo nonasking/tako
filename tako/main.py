@@ -21,6 +21,12 @@ from .config import (
     load_config,
     resolve_config_path,
 )
+from .fields import (
+    SEARCH_KEYWORDS,
+    filter_candidates,
+    warn_comment_loss,
+    write_field_mapping,
+)
 from .issue_draft import DraftError, IssueDraft, build_payload, render_preview
 from .jira_client import JiraApiError, JiraSiteClient, markdown_to_adf
 from .prompts import ask_choice, ask_multiline, ask_text, confirm, stdin_is_tty
@@ -53,6 +59,22 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     sub.add_parser("preview", help="stdin JSON → 미리보기 stdout")
     sub.add_parser("build", help="stdin JSON → 페이로드 JSON stdout")
     sub.add_parser("interactive", help="TTY 인터랙티브 → 페이로드 JSON stdout")
+
+    fields_parser = sub.add_parser("fields", help="custom field 매핑 관리")
+    fields_sub = fields_parser.add_subparsers(dest="fields_command", required=True)
+
+    set_parser = fields_sub.add_parser("set", help="필드 매핑 등록 (config 자동 쓰기)")
+    set_parser.add_argument("name", help=f"필드 이름. 지원: {', '.join(SEARCH_KEYWORDS)}")
+    set_parser.add_argument("field_id", help="customfield ID (예: customfield_10016)")
+
+    detect_parser = fields_sub.add_parser(
+        "detect", help="Jira API 자동 조회로 필드 후보 찾기"
+    )
+    detect_parser.add_argument("name", help=f"필드 이름. 지원: {', '.join(SEARCH_KEYWORDS)}")
+    detect_parser.add_argument(
+        "--save", action="store_true", help="찾은 결과를 config 에 자동 쓰기 (주석 손실 주의)"
+    )
+
     return parser.parse_args(argv)
 
 
@@ -274,10 +296,98 @@ def _cmd_new(args: argparse.Namespace, cfg: TakoConfig) -> int:
     return 0
 
 
+def _cmd_fields_set(args: argparse.Namespace) -> int:
+    if args.name not in SEARCH_KEYWORDS:
+        sys.stderr.write(
+            f"[fields] 지원하지 않는 이름: {args.name!r}. 지원: {', '.join(SEARCH_KEYWORDS)}\n"
+        )
+        return 2
+    if not args.field_id.startswith("customfield_"):
+        sys.stderr.write(
+            f"[경고] field_id 가 'customfield_' 로 시작하지 않습니다: {args.field_id!r}\n"
+        )
+    config_path = resolve_config_path(args.config)
+    warn_comment_loss()
+    try:
+        write_field_mapping(args.name, args.field_id, config_path)
+    except (FileNotFoundError, ValueError) as exc:
+        sys.stderr.write(f"[fields] {exc}\n")
+        return 2
+    sys.stderr.write(f"등록 완료: jira.fields.{args.name} = {args.field_id}\n")
+    return 0
+
+
+def _cmd_fields_detect(args: argparse.Namespace, cfg: TakoConfig) -> int:
+    if args.name not in SEARCH_KEYWORDS:
+        sys.stderr.write(
+            f"[fields] 지원하지 않는 이름: {args.name!r}. 지원: {', '.join(SEARCH_KEYWORDS)}\n"
+        )
+        return 2
+    creds = _load_credentials_or_guide(args.credentials)
+    client = JiraSiteClient(site=cfg.jira.site, creds=creds)
+    sys.stderr.write(f"{cfg.jira.site} 에서 필드 목록 조회 중...\n")
+    try:
+        all_fields = client.list_fields()
+    except JiraApiError as exc:
+        sys.stderr.write(f"[jira] {exc}\n")
+        return 2
+
+    candidates = filter_candidates(args.name, all_fields)
+    if not candidates:
+        sys.stderr.write(f"매칭되는 필드 없음 ({args.name}).\n")
+        return 1
+
+    sys.stderr.write("\n후보:\n")
+    for i, (fid, fname) in enumerate(candidates, 1):
+        sys.stderr.write(f"  {i}) {fid} — {fname!r}\n")
+
+    if len(candidates) == 1:
+        chosen_id, chosen_name = candidates[0]
+        sys.stderr.write(f"\n자동 선택: {chosen_id} ({chosen_name!r})\n")
+    else:
+        if not stdin_is_tty():
+            sys.stderr.write(
+                "\n후보가 여럿이고 TTY 가 아님. tako fields set 으로 직접 등록하세요.\n"
+            )
+            return 1
+        idx_raw = ask_text(f"\n어느 것을 {args.name} 로?", default="1").strip()
+        try:
+            idx = int(idx_raw) - 1
+            if not 0 <= idx < len(candidates):
+                raise ValueError
+        except ValueError:
+            sys.stderr.write("유효하지 않은 번호.\n")
+            return 2
+        chosen_id, chosen_name = candidates[idx]
+
+    if args.save:
+        config_path = resolve_config_path(args.config)
+        warn_comment_loss()
+        try:
+            write_field_mapping(args.name, chosen_id, config_path)
+        except (FileNotFoundError, ValueError) as exc:
+            sys.stderr.write(f"[fields] {exc}\n")
+            return 2
+        sys.stderr.write(f"\n등록 완료: jira.fields.{args.name} = {chosen_id}\n")
+    else:
+        sys.stderr.write(
+            f"\n다음을 ~/.config/tako/config.yaml 의 jira 블록에 추가하세요:\n\n"
+            f"  fields:\n    {args.name}: {chosen_id}\n\n"
+            f"또는 자동 등록: tako fields set {args.name} {chosen_id}\n"
+            f"또는 한 번에:   tako fields detect {args.name} --save\n"
+        )
+
+    print(chosen_id)
+    return 0
+
+
 def run(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
     if args.command == "init":
         return _cmd_init(args)
+    if args.command == "fields" and args.fields_command == "set":
+        # set 은 config 만 건드림 — 로드는 안 함 (없으면 에러 메시지 자체 처리)
+        return _cmd_fields_set(args)
     cfg = _load_or_guide(args.config)
     match args.command:
         case "new":
@@ -288,6 +398,11 @@ def run(argv: list[str] | None = None) -> int:
             return _cmd_build(cfg)
         case "interactive":
             return _cmd_interactive(cfg)
+        case "fields":
+            if args.fields_command == "detect":
+                return _cmd_fields_detect(args, cfg)
+            sys.stderr.write(f"unknown fields command: {args.fields_command}\n")
+            return 2
         case _:
             sys.stderr.write(f"unknown command: {args.command}\n")
             return 2
