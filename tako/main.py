@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from typing import Any
 
@@ -21,6 +22,7 @@ from .config import (
     load_config,
     resolve_config_path,
 )
+from .adf_to_md import adf_to_markdown
 from .fields import (
     SEARCH_KEYWORDS,
     filter_candidates,
@@ -59,6 +61,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     sub.add_parser("preview", help="stdin JSON → 미리보기 stdout")
     sub.add_parser("build", help="stdin JSON → 페이로드 JSON stdout")
     sub.add_parser("interactive", help="TTY 인터랙티브 → 페이로드 JSON stdout")
+
+    show_parser = sub.add_parser("show", help="기존 이슈 조회 (조회용)")
+    show_parser.add_argument("key", help="이슈 키 또는 browse URL (예: WL-8876)")
+    show_parser.add_argument("--json", dest="as_json", action="store_true", help="원본 JSON 출력 (LLM/자동화용)")
+    show_parser.add_argument("--max-comments", type=int, default=5, help="포함할 최근 코멘트 수 (기본 5, 0 이면 제외)")
 
     fields_parser = sub.add_parser("fields", help="custom field 매핑 관리")
     fields_sub = fields_parser.add_subparsers(dest="fields_command", required=True)
@@ -296,6 +303,82 @@ def _cmd_new(args: argparse.Namespace, cfg: TakoConfig) -> int:
     return 0
 
 
+_KEY_FROM_URL = re.compile(r"/browse/([A-Z][A-Z0-9_]*-\d+)", re.IGNORECASE)
+
+
+def _extract_key(raw: str) -> str:
+    raw = raw.strip()
+    if "/" in raw:
+        m = _KEY_FROM_URL.search(raw)
+        if m:
+            return m.group(1).upper()
+    return raw.upper()
+
+
+def _cmd_show(args: argparse.Namespace, cfg: TakoConfig) -> int:
+    key = _extract_key(args.key)
+    creds = _load_credentials_or_guide(args.credentials)
+    client = JiraSiteClient(site=cfg.jira.site, creds=creds)
+    try:
+        issue = client.get_issue(key)
+        comments = client.list_comments(key, max_results=args.max_comments) if args.max_comments > 0 else []
+    except JiraApiError as exc:
+        sys.stderr.write(f"[jira] {exc}\n")
+        return 2
+
+    if args.as_json:
+        payload = {"issue": issue, "comments": comments, "url": f"https://{cfg.jira.site}/browse/{key}"}
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    print(_render_issue_text(issue, comments, site=cfg.jira.site))
+    return 0
+
+
+def _render_issue_text(issue: dict[str, Any], comments: list[dict[str, Any]], *, site: str) -> str:
+    fields = issue.get("fields") or {}
+    key = issue.get("key", "?")
+    summary = fields.get("summary", "")
+    itype = (fields.get("issuetype") or {}).get("name", "?")
+    status = (fields.get("status") or {}).get("name", "?")
+    assignee = ((fields.get("assignee") or {}).get("displayName")) or "(미할당)"
+    reporter = ((fields.get("reporter") or {}).get("displayName")) or "(없음)"
+    priority = ((fields.get("priority") or {}).get("name")) or "(없음)"
+    duedate = fields.get("duedate") or "(없음)"
+    labels = fields.get("labels") or []
+    parent = fields.get("parent") or {}
+    parent_key = parent.get("key")
+    parent_summary = (parent.get("fields") or {}).get("summary", "")
+
+    description_md = adf_to_markdown(fields.get("description"))
+
+    lines: list[str] = []
+    lines.append(f"[{key}] {itype} — {summary}")
+    if parent_key:
+        lines.append(f"부모:     {parent_key} {parent_summary}".rstrip())
+    lines.append(f"상태:     {status}")
+    lines.append(f"담당자:   {assignee}")
+    lines.append(f"보고자:   {reporter}")
+    lines.append(f"우선순위: {priority}")
+    lines.append(f"기한:     {duedate}")
+    if labels:
+        lines.append(f"라벨:     {', '.join(labels)}")
+    lines.append(f"링크:     https://{site}/browse/{key}")
+    lines.append("")
+    lines.append("--- 설명 ---")
+    lines.append(description_md or "(비어 있음)")
+    if comments:
+        lines.append("")
+        lines.append(f"--- 코멘트 ({len(comments)}, 최신순) ---")
+        for c in comments:
+            author = ((c.get("author") or {}).get("displayName")) or "?"
+            created = (c.get("created") or "")[:10]
+            body_md = adf_to_markdown(c.get("body"))
+            lines.append(f"\n[{created}] {author}")
+            lines.append(body_md or "(비어 있음)")
+    return "\n".join(lines)
+
+
 def _cmd_fields_set(args: argparse.Namespace) -> int:
     if args.name not in SEARCH_KEYWORDS:
         sys.stderr.write(
@@ -392,6 +475,8 @@ def run(argv: list[str] | None = None) -> int:
     match args.command:
         case "new":
             return _cmd_new(args, cfg)
+        case "show":
+            return _cmd_show(args, cfg)
         case "preview":
             return _cmd_preview(cfg)
         case "build":
