@@ -69,6 +69,16 @@ class JiraSiteClient:
             return CreatedIssue(key=key, url=f"https://{self._site}/browse/{key}", raw=data)
         raise JiraApiError(_format_error(resp))
 
+    def list_fields(self) -> list[dict[str, Any]]:
+        """GET /rest/api/3/field — 사이트의 모든 필드 목록."""
+        resp = self._request("GET", "field")
+        if resp.status_code != 200:
+            raise JiraApiError(_format_error(resp))
+        data = resp.json()
+        if not isinstance(data, list):
+            raise JiraApiError(f"field 응답이 리스트가 아님: {type(data).__name__}")
+        return data
+
 
 def _format_error(resp: requests.Response) -> str:
     code = resp.status_code
