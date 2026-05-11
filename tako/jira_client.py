@@ -118,6 +118,19 @@ class JiraSiteClient:
             return
         raise JiraApiError(_format_error(resp))
 
+    def update_issue_fields(self, key: str, fields: dict[str, Any]) -> None:
+        """PUT /rest/api/3/issue/<key> — 필드 업데이트.
+
+        호출자가 fields dict 를 *완성된 형태*로 넘긴다 (description 은 ADF JSON 트리).
+        성공 시 빈 응답(204).
+        """
+        resp = self._request("PUT", f"issue/{key}", json={"fields": fields})
+        if resp.status_code in (200, 204):
+            return
+        if resp.status_code == 404:
+            raise JiraApiError(f"이슈를 찾을 수 없음: {key}")
+        raise JiraApiError(_format_error(resp))
+
 
 def _format_error(resp: requests.Response) -> str:
     code = resp.status_code

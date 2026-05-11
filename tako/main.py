@@ -73,6 +73,25 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     show_parser.add_argument("--json", dest="as_json", action="store_true", help="원본 JSON 출력 (LLM/자동화용)")
     show_parser.add_argument("--max-comments", type=int, default=5, help="포함할 최근 코멘트 수 (기본 5, 0 이면 제외)")
 
+    update_parser = sub.add_parser("update", help="기존 이슈 본문(description) 업데이트")
+    update_parser.add_argument("key", help="이슈 키 또는 browse URL")
+    update_parser.add_argument(
+        "--body",
+        help="추가/덮어쓸 마크다운 본문. 생략하면 stdin 또는 TTY 입력으로 받음",
+    )
+    update_parser.add_argument(
+        "--section",
+        default="업데이트",
+        help="append 모드에서 추가될 섹션 헤더 이름 (기본 '업데이트' → '## 업데이트 (YYYY-MM-DD)')",
+    )
+    update_parser.add_argument(
+        "--mode",
+        choices=["append", "overwrite"],
+        default="append",
+        help="append (기본): 기존 본문 끝에 새 섹션. overwrite: 통째 교체",
+    )
+    update_parser.add_argument("--yes", "-y", action="store_true", help="확인 없이 바로 적용")
+
     fields_parser = sub.add_parser("fields", help="custom field 매핑 관리")
     fields_sub = fields_parser.add_subparsers(dest="fields_command", required=True)
 
@@ -347,6 +366,87 @@ def _extract_key(raw: str) -> str:
     return raw.upper()
 
 
+def _read_body_input(args: argparse.Namespace) -> str:
+    """body 텍스트를 우선순위로 받음: --body 인자 > stdin > TTY 입력."""
+    if args.body is not None:
+        return args.body
+    if not sys.stdin.isatty():
+        raw = sys.stdin.read()
+        if not raw.strip():
+            sys.stderr.write("[update] body 가 비었음. --body 또는 stdin 으로 마크다운 전달.\n")
+            raise SystemExit(2)
+        return raw.rstrip("\n")
+    sys.stderr.write("추가할 본문(마크다운) 을 입력 (Ctrl+D 로 종료)\n")
+    sys.stderr.flush()
+    raw = sys.stdin.read()
+    if not raw.strip():
+        sys.stderr.write("[update] body 가 비었음.\n")
+        raise SystemExit(2)
+    return raw.rstrip("\n")
+
+
+def _today_kst_str() -> str:
+    """KST(UTC+9) 기준 YYYY-MM-DD."""
+    from datetime import datetime, timedelta, timezone
+    kst = timezone(timedelta(hours=9))
+    return datetime.now(tz=kst).strftime("%Y-%m-%d")
+
+
+def _cmd_update(args: argparse.Namespace, cfg: TakoConfig) -> int:
+    key = _extract_key(args.key)
+    body_md = _read_body_input(args)
+
+    creds = _load_credentials_or_guide(args.credentials)
+    client = JiraSiteClient(site=cfg.jira.site, creds=creds)
+
+    # 현재 본문 조회 (append 모드에서 필요. overwrite 도 미리보기 위해 받아둠)
+    try:
+        issue = client.get_issue(key)
+    except JiraApiError as exc:
+        sys.stderr.write(f"[jira] {exc}\n")
+        return 2
+    current_md = adf_to_markdown((issue.get("fields") or {}).get("description"))
+    summary = (issue.get("fields") or {}).get("summary", "")
+
+    if args.mode == "append":
+        section_header = f"## {args.section} ({_today_kst_str()})"
+        new_section = f"{section_header}\n{body_md}"
+        merged_md = (current_md.rstrip() + "\n\n" + new_section) if current_md.strip() else new_section
+    else:  # overwrite
+        new_section = body_md
+        merged_md = body_md
+
+    # 미리보기
+    sys.stderr.write(f"\n[{key}] {summary}\n")
+    sys.stderr.write(f"링크: https://{cfg.jira.site}/browse/{key}\n")
+    sys.stderr.write(f"\n--- 모드: {args.mode} ---\n")
+    if args.mode == "append":
+        sys.stderr.write("\n[추가될 섹션]\n")
+        sys.stderr.write(new_section + "\n")
+    else:
+        sys.stderr.write("\n[현재 본문 → 교체될 것]\n")
+        sys.stderr.write((current_md or "(비어 있음)") + "\n")
+        sys.stderr.write("\n[새 본문]\n")
+        sys.stderr.write(body_md + "\n")
+    sys.stderr.write("\n")
+
+    if not args.yes:
+        if not confirm("이대로 본문을 업데이트할까요?"):
+            sys.stderr.write("취소.\n")
+            return 1
+
+    adf = markdown_to_adf(merged_md)
+    try:
+        client.update_issue_fields(key, {"description": adf})
+    except JiraApiError as exc:
+        sys.stderr.write(f"[jira] {exc}\n")
+        return 2
+
+    sys.stderr.write(f"\n업데이트 완료: {key}\n  링크: https://{cfg.jira.site}/browse/{key}\n")
+    print(key)
+    return 0
+
+
 def _cmd_show(args: argparse.Namespace, cfg: TakoConfig) -> int:
     key = _extract_key(args.key)
     creds = _load_credentials_or_guide(args.credentials)
@@ -509,6 +609,8 @@ def run(argv: list[str] | None = None) -> int:
             return _cmd_new(args, cfg)
         case "show":
             return _cmd_show(args, cfg)
+        case "update":
+            return _cmd_update(args, cfg)
         case "preview":
             return _cmd_preview(cfg)
         case "build":
