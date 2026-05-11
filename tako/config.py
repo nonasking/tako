@@ -24,6 +24,10 @@ class JiraSite:
     site: str
     default_project: str
     default_issue_type: str
+    # 사용자별 custom field 이름 → Jira customfield_XXXX ID 매핑.
+    # 예: {"story_points": "customfield_10016"}
+    # v1.x 는 수동 등록만. v1.2+ 에서 자동 조회로 같은 슬롯 채우는 확장 예정.
+    custom_fields: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -78,6 +82,15 @@ def _build_config(raw: dict[str, Any]) -> TakoConfig:
     default_project = _require_str(jira_raw, "jira.default_project")
     default_issue_type = _require_str(jira_raw, "jira.default_issue_type")
 
+    fields_raw = jira_raw.get("fields") or {}
+    if not isinstance(fields_raw, dict):
+        raise ConfigError("jira.fields 가 매핑이 아님.")
+    custom_fields: dict[str, str] = {}
+    for name, cf_id in fields_raw.items():
+        if not isinstance(cf_id, str) or not cf_id.strip():
+            raise ConfigError(f"jira.fields.{name} 값이 비었거나 문자열이 아님.")
+        custom_fields[str(name)] = cf_id.strip()
+
     issue_types_raw = raw.get("issue_types") or {}
     if not isinstance(issue_types_raw, dict):
         raise ConfigError("issue_types 가 매핑이 아님.")
@@ -112,6 +125,7 @@ def _build_config(raw: dict[str, Any]) -> TakoConfig:
             site=site,
             default_project=default_project,
             default_issue_type=default_issue_type,
+            custom_fields=custom_fields,
         ),
         allowed_issue_types=allowed,
         auto_fill=auto_fill,
