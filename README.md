@@ -65,12 +65,17 @@ tako new \
   --yes
 ```
 
-`--story-points` / `--duedate` 는 선택. 인터랙티브 모드에서도 빈 입력으로 두면 스킵된다. 스토리포인트를 *실제로 페이로드에 실으려면* config 의 `jira.fields.story_points` 에 사용자 환경의 customfield ID 가 있어야 한다 (없으면 경고 출력 후 SP 만 제외하고 생성). 본인 사이트의 ID 알아내기:
+`--story-points` / `--duedate` 는 선택. 인터랙티브 모드에서도 빈 입력으로 두면 스킵된다. 스토리포인트를 *실제로 페이로드에 실으려면* config 의 `jira.fields.story_points` 에 사용자 환경의 customfield ID 가 있어야 한다 (없으면 경고 출력 후 SP 만 제외하고 생성). 두 가지 방법:
 
 ```bash
-curl -u "email:token" "https://<site>/rest/api/3/field" \
-  | jq '.[] | select(.name | test("Story";"i")) | {id, name}'
+# 방법 1) 자동 — Jira 에서 후보 찾아서 한 줄로 등록
+tako fields detect story_points --save
+
+# 방법 2) ID 를 이미 알고 있으면 직접 등록
+tako fields set story_points customfield_10016
 ```
+
+`tako fields detect <name>` 는 `--save` 없이 쓰면 결과만 출력하고 config 는 안 건드림 (config 자동 쓰기 시 주석 손실 가능성 때문). 지원하는 이름: `story_points` (v1.x).
 
 흐름: 입력 → 미리보기 → Y/n → REST → 키 + 링크. Claude Code 불필요.
 
@@ -95,7 +100,7 @@ echo '{"summary":"x","description":"y"}' | tako build
 tako interactive
 ```
 
-`new` 만 실제 REST 호출. 나머지는 페이로드 빌드까지.
+`new` / `fields detect` 만 실제 REST 호출. 나머지는 로컬 처리.
 
 ## 적용 환경 가정
 
@@ -128,4 +133,4 @@ tako/
 - `401 인증 실패` — 토큰 만료. `tako init --force` 로 재입력.
 - `403 권한 없음` — 해당 프로젝트에 이슈 생성 권한 있는지 확인.
 - `400/422 입력 거부` — 응답 body 확인. 흔한 원인: 이슈 타입 이름이 그 프로젝트에 정의되지 않음.
-- `story_points 값을 받았지만 ... 페이로드에서 제외함` — config 의 `jira.fields.story_points` 에 사용자 환경 customfield ID 등록 필요. 위 `curl /rest/api/3/field` 한 줄로 ID 확인.
+- `story_points 값을 받았지만 ... 페이로드에서 제외함` — `tako fields detect story_points --save` 한 줄로 자동 등록 가능.
