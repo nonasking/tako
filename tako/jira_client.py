@@ -79,6 +79,26 @@ class JiraSiteClient:
             raise JiraApiError(f"field 응답이 리스트가 아님: {type(data).__name__}")
         return data
 
+    def get_issue(self, key: str) -> dict[str, Any]:
+        """GET /rest/api/3/issue/<key> — 단일 이슈 상세."""
+        resp = self._request("GET", f"issue/{key}")
+        if resp.status_code == 200:
+            return resp.json()
+        if resp.status_code == 404:
+            raise JiraApiError(f"이슈를 찾을 수 없음: {key}")
+        raise JiraApiError(_format_error(resp))
+
+    def list_comments(self, key: str, *, max_results: int = 5) -> list[dict[str, Any]]:
+        """최근 코멘트 N개. 응답에서 최신순으로 정렬해 반환."""
+        resp = self._request(
+            "GET", f"issue/{key}/comment?orderBy=-created&maxResults={int(max_results)}"
+        )
+        if resp.status_code != 200:
+            raise JiraApiError(_format_error(resp))
+        data = resp.json()
+        comments = data.get("comments") if isinstance(data, dict) else None
+        return comments if isinstance(comments, list) else []
+
 
 def _format_error(resp: requests.Response) -> str:
     code = resp.status_code
