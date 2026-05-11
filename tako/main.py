@@ -46,6 +46,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     new_parser.add_argument("--description")
     new_parser.add_argument("--parent")
     new_parser.add_argument("--label", action="append", default=[], help="라벨 (반복 가능)")
+    new_parser.add_argument("--story-points", dest="story_points", type=int, help="스토리포인트 (정수)")
+    new_parser.add_argument("--duedate", help="기한 YYYY-MM-DD")
     new_parser.add_argument("--yes", "-y", action="store_true", help="확인 없이 바로 생성")
 
     sub.add_parser("preview", help="stdin JSON → 미리보기 stdout")
@@ -96,6 +98,9 @@ def _draft_from_dict(data: dict[str, Any], cfg: TakoConfig) -> IssueDraft:
     parent = payload.get("parent_epic") or payload.get("parent")
     if parent:
         payload["parent_epic"] = cfg.resolve_epic(parent)
+    # 별칭: --due 가 들어와도 받기 (사용자 친화)
+    if "due" in payload and "duedate" not in payload:
+        payload["duedate"] = payload["due"]
 
     if cfg.allowed_issue_types and payload["issue_type"] not in cfg.allowed_issue_types:
         sys.stderr.write(
@@ -132,6 +137,16 @@ def _collect_interactively(cfg: TakoConfig, *, prefilled: dict[str, Any] | None 
         parent_input = ask_text("부모 (별칭/키, 없으면 Enter)", default="").strip()
     labels: list[str] = list(pre.get("labels") or [])
 
+    # optional 영역
+    story_points = pre.get("story_points")
+    if story_points is None:
+        sp_raw = ask_text("스토리포인트 (정수, 없으면 Enter)", default="").strip()
+        story_points = sp_raw if sp_raw else None
+    duedate = pre.get("duedate")
+    if duedate is None:
+        due_raw = ask_text("기한 YYYY-MM-DD (없으면 Enter)", default="").strip()
+        duedate = due_raw if due_raw else None
+
     payload: dict[str, Any] = {
         "project": project,
         "issue_type": issue_type,
@@ -142,6 +157,10 @@ def _collect_interactively(cfg: TakoConfig, *, prefilled: dict[str, Any] | None 
     resolved_parent = cfg.resolve_epic(parent_input) if parent_input else None
     if resolved_parent:
         payload["parent_epic"] = resolved_parent
+    if story_points is not None:
+        payload["story_points"] = story_points
+    if duedate is not None:
+        payload["duedate"] = duedate
 
     try:
         return IssueDraft.from_payload(payload)
@@ -158,7 +177,7 @@ def _cmd_preview(cfg: TakoConfig) -> int:
 
 def _cmd_build(cfg: TakoConfig) -> int:
     draft = _draft_from_dict(_read_stdin_json(), cfg)
-    print(json.dumps(build_payload(draft), ensure_ascii=False, indent=2))
+    print(json.dumps(build_payload(draft, cfg.jira.custom_fields), ensure_ascii=False, indent=2))
     return 0
 
 
@@ -173,7 +192,7 @@ def _cmd_interactive(cfg: TakoConfig) -> int:
     if not confirm("페이로드 출력?"):
         sys.stderr.write("취소.\n")
         return 1
-    print(json.dumps(build_payload(draft), ensure_ascii=False, indent=2))
+    print(json.dumps(build_payload(draft, cfg.jira.custom_fields), ensure_ascii=False, indent=2))
     return 0
 
 
@@ -202,6 +221,10 @@ def _cmd_new(args: argparse.Namespace, cfg: TakoConfig) -> int:
         prefilled["parent_epic"] = args.parent
     if args.label:
         prefilled["labels"] = list(args.label)
+    if args.story_points is not None:
+        prefilled["story_points"] = args.story_points
+    if args.duedate:
+        prefilled["duedate"] = args.duedate
 
     needs_interactive = not (args.summary and args.description is not None)
     if needs_interactive and not stdin_is_tty():
@@ -210,7 +233,20 @@ def _cmd_new(args: argparse.Namespace, cfg: TakoConfig) -> int:
         )
         return 2
 
-    draft = _collect_interactively(cfg, prefilled=prefilled)
+    if needs_interactive:
+        draft = _collect_interactively(cfg, prefilled=prefilled)
+    else:
+        # 완전 자동 모드: prefilled 만으로 draft. optional 항목 묻지 않음.
+        prefilled.setdefault("project", cfg.jira.default_project)
+        prefilled.setdefault("issue_type", cfg.jira.default_issue_type)
+        if "parent_epic" in prefilled:
+            prefilled["parent_epic"] = cfg.resolve_epic(prefilled["parent_epic"])
+        try:
+            draft = IssueDraft.from_payload(prefilled)
+        except DraftError as exc:
+            sys.stderr.write(f"[input] {exc}\n")
+            return 2
+
     sys.stderr.write("\n")
     print(render_preview(draft), file=sys.stderr)
     sys.stderr.write("\n")
@@ -220,7 +256,10 @@ def _cmd_new(args: argparse.Namespace, cfg: TakoConfig) -> int:
             sys.stderr.write("취소.\n")
             return 1
 
-    fields = build_payload(draft)["payload"]["fields"]
+    built = build_payload(draft, cfg.jira.custom_fields)
+    for w in built["meta"].get("warnings", []):
+        sys.stderr.write(f"[경고] {w}\n")
+    fields = built["payload"]["fields"]
     fields["description"] = markdown_to_adf(draft.description)
 
     client = JiraSiteClient(site=cfg.jira.site, creds=creds)

@@ -35,8 +35,16 @@ tako init
 ### A) 셸에서 직접
 
 ```bash
-# 인터랙티브 (권장)
+# 인터랙티브 (권장) — 아래처럼 차례로 묻는다
 tako new
+#  프로젝트 키 [WL]:
+#  이슈 유형 (Task / 기능변경 / 버그수정) [기능변경]:
+#  제목: ...
+#  본문(마크다운) (Ctrl+D 로 종료): ...
+#  부모 (별칭/키, 없으면 Enter):
+#  스토리포인트 (정수, 없으면 Enter):
+#  기한 YYYY-MM-DD (없으면 Enter):
+#  → 미리보기 → Jira 에 생성? (Y/n)
 
 # 일부만 미리 지정
 tako new --project WL --issue-type 기능변경
@@ -52,7 +60,16 @@ tako new \
 
 ## 기대
 정렬 적용" \
+  --story-points 3 \
+  --duedate 2026-06-15 \
   --yes
+```
+
+`--story-points` / `--duedate` 는 선택. 인터랙티브 모드에서도 빈 입력으로 두면 스킵된다. 스토리포인트를 *실제로 페이로드에 실으려면* config 의 `jira.fields.story_points` 에 사용자 환경의 customfield ID 가 있어야 한다 (없으면 경고 출력 후 SP 만 제외하고 생성). 본인 사이트의 ID 알아내기:
+
+```bash
+curl -u "email:token" "https://<site>/rest/api/3/field" \
+  | jq '.[] | select(.name | test("Story";"i")) | {id, name}'
 ```
 
 흐름: 입력 → 미리보기 → Y/n → REST → 키 + 링크. Claude Code 불필요.
@@ -111,3 +128,4 @@ tako/
 - `401 인증 실패` — 토큰 만료. `tako init --force` 로 재입력.
 - `403 권한 없음` — 해당 프로젝트에 이슈 생성 권한 있는지 확인.
 - `400/422 입력 거부` — 응답 body 확인. 흔한 원인: 이슈 타입 이름이 그 프로젝트에 정의되지 않음.
+- `story_points 값을 받았지만 ... 페이로드에서 제외함` — config 의 `jira.fields.story_points` 에 사용자 환경 customfield ID 등록 필요. 위 `curl /rest/api/3/field` 한 줄로 ID 확인.
