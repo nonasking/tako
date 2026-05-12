@@ -12,7 +12,7 @@ import io
 from typing import Any
 
 
-CSV_COLUMNS = ("key", "status", "type", "assignee", "updated", "summary", "parent", "url")
+CSV_COLUMNS = ("key", "status", "type", "assignee", "created", "updated", "summary", "parent", "url")
 
 
 def issues_to_csv(issues: list[dict[str, Any]], *, site: str) -> str:
@@ -35,8 +35,9 @@ def _row(issue: dict[str, Any], *, site: str) -> tuple[str, ...]:
     status = (f.get("status") or {}).get("name", "")
     itype = (f.get("issuetype") or {}).get("name", "")
     assignee = ((f.get("assignee") or {}).get("displayName")) or ""
+    created = (f.get("created") or "")[:10]
     updated = (f.get("updated") or "")[:10]
     summary = f.get("summary", "")
     parent = (f.get("parent") or {}).get("key", "")
     url = f"https://{site}/browse/{key}" if key else ""
-    return (key, status, itype, assignee, updated, summary, parent, url)
+    return (key, status, itype, assignee, created, updated, summary, parent, url)
