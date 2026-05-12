@@ -165,9 +165,9 @@ tako list --assignee me --csv --output my-issues.csv
 tako list --assignee me --csv > my-issues.csv   # stdout 리다이렉트도 가능
 ```
 
-지원 인자: `--assignee` (me / 이메일 / accountId), `--project`, `--status` (반복), `--type` (반복), `--parent`, `--label` (반복), `--updated` (`7d`/`1w`/`YYYY-MM-DD`), `--query`, `--jql`, `--limit` (기본 20), `--json`, `--csv`, `--output / -o`.
+지원 인자: `--assignee` (me / 이메일 / accountId), `--project`, `--status` (반복), `--type` (반복), `--parent`, `--label` (반복), `--updated` (`7d`/`1w`/`YYYY-MM-DD`), `--created` (동일 형식), `--query`, `--jql`, `--limit` (기본 20), `--json`, `--csv`, `--output / -o`.
 
-CSV 컬럼: `key, status, type, assignee, updated, summary, parent, url`. URL 컬럼이 있어 Excel 에서 *하이퍼링크 클릭* 으로 바로 이동.
+CSV 컬럼: `key, status, type, assignee, created, updated, summary, parent, url`. URL 컬럼이 있어 Excel 에서 *하이퍼링크 클릭* 으로 바로 이동.
 
 Claude Code 슬래시는 *자연어 → 인자 매핑*:
 ```

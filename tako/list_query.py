@@ -24,6 +24,7 @@ class ListFilters:
     parent: str | None = None
     labels: tuple[str, ...] = ()
     updated: str | None = None
+    created: str | None = None
     query: str | None = None
     raw_jql: str | None = None
 
@@ -53,16 +54,18 @@ def _assignee_clause(value: str) -> str:
     )
 
 
-def _updated_clause(value: str) -> str:
-    """단순 표현 → JQL 절. '7d' → 'updated >= -7d', '2026-05-01' → 'updated >= 2026-05-01'"""
+def _date_clause(field: str, value: str) -> str:
+    """단순 표현 → JQL 절. '<field> >= -<단축>' 또는 '<field> >= "YYYY-MM-DD"'.
+
+    지원: '7d'/'24h'/'2w'/'1m' 단축, 또는 'YYYY-MM-DD'.
+    """
     value = value.strip()
     if _UPDATED_SHORTHAND.match(value):
-        return f"updated >= -{value}"
-    # ISO 날짜 가정 (대략)
+        return f"{field} >= -{value}"
     if re.match(r"^\d{4}-\d{2}-\d{2}$", value):
-        return f'updated >= "{value}"'
+        return f'{field} >= "{value}"'
     raise QueryError(
-        f"updated 값 형식 미지원: {value!r}\n"
+        f"{field} 값 형식 미지원: {value!r}\n"
         "  지원: '7d'/'24h'/'2w'/'1m' 단축, 또는 'YYYY-MM-DD'"
     )
 
@@ -100,7 +103,10 @@ def build_jql(filters: ListFilters, *, default_project: str | None = None) -> st
         clauses.append(f"labels in ({items})")
 
     if filters.updated:
-        clauses.append(_updated_clause(filters.updated))
+        clauses.append(_date_clause("updated", filters.updated))
+
+    if filters.created:
+        clauses.append(_date_clause("created", filters.created))
 
     if filters.query:
         clauses.append(f'text ~ "{_esc(filters.query)}"')
