@@ -83,6 +83,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     list_parser.add_argument("--parent", help="부모 이슈 키 (예: WL-9200)")
     list_parser.add_argument("--label", action="append", default=[], help="라벨 (반복 가능)")
     list_parser.add_argument("--updated", help="업데이트 시점: '7d'/'24h'/'2w'/'1m' 또는 'YYYY-MM-DD'")
+    list_parser.add_argument("--created", help="생성 시점: '7d'/'24h'/'2w'/'1m' 또는 'YYYY-MM-DD'")
     list_parser.add_argument("--query", help="제목/본문 텍스트 검색")
     list_parser.add_argument("--jql", dest="raw_jql", help="JQL 직접 작성 (다른 필터 무시)")
     list_parser.add_argument("--limit", type=int, default=20, help="결과 수 상한 (기본 20)")
@@ -481,6 +482,7 @@ def _cmd_list(args: argparse.Namespace, cfg: TakoConfig) -> int:
         parent=args.parent,
         labels=tuple(args.label),
         updated=args.updated,
+        created=args.created,
         query=args.query,
         raw_jql=args.raw_jql,
     )
@@ -497,7 +499,7 @@ def _cmd_list(args: argparse.Namespace, cfg: TakoConfig) -> int:
     try:
         result = client.search_issues(
             jql,
-            fields=["summary", "status", "issuetype", "assignee", "updated", "parent"],
+            fields=["summary", "status", "issuetype", "assignee", "created", "updated", "parent"],
             max_results=args.limit,
         )
     except JiraApiError as exc:
@@ -547,20 +549,21 @@ def _emit(text: str, output_path: str | None) -> None:
 
 
 def _render_list_table(issues: list[dict[str, Any]]) -> str:
-    rows: list[tuple[str, str, str, str, str, str]] = []
+    rows: list[tuple[str, ...]] = []
     for it in issues:
         f = it.get("fields") or {}
         key = it.get("key", "?")
         status = (f.get("status") or {}).get("name", "?")
         itype = (f.get("issuetype") or {}).get("name", "?")
         assignee = ((f.get("assignee") or {}).get("displayName")) or "(미할당)"
+        created = (f.get("created") or "")[:10]
         updated = (f.get("updated") or "")[:10]
         summary = f.get("summary", "")
-        rows.append((key, status, itype, assignee, updated, summary))
+        rows.append((key, status, itype, assignee, created, updated, summary))
 
     # 단순 컬럼 너비 — 한국어가 섞여 시각 폭이 다를 수 있음. v1.x 는 단순 처리.
-    widths = (12, 10, 12, 14, 11, 60)
-    header = ("KEY", "상태", "유형", "담당자", "업데이트", "제목")
+    widths = (12, 10, 12, 14, 11, 11, 60)
+    header = ("KEY", "상태", "유형", "담당자", "생성", "업데이트", "제목")
 
     def line(row: tuple[str, ...]) -> str:
         out = []
@@ -569,7 +572,8 @@ def _render_list_table(issues: list[dict[str, Any]]) -> str:
             out.append(cell[: w].ljust(w))
         return "  ".join(out).rstrip()
 
-    return "\n".join([line(header), line(("-" * 12, "-" * 8, "-" * 8, "-" * 10, "-" * 10, "-" * 30))] + [line(r) for r in rows])
+    divider = tuple("-" * (w - 2) for w in widths)
+    return "\n".join([line(header), line(divider)] + [line(r) for r in rows])
 
 
 def _cmd_show(args: argparse.Namespace, cfg: TakoConfig) -> int:
