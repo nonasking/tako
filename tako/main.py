@@ -84,9 +84,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     list_parser.add_argument("--label", action="append", default=[], help="라벨 (반복 가능)")
     list_parser.add_argument("--updated", help="업데이트 시점: '7d'/'24h'/'2w'/'1m' 또는 'YYYY-MM-DD'")
     list_parser.add_argument("--created", help="생성 시점: '7d'/'24h'/'2w'/'1m' 또는 'YYYY-MM-DD'")
+    list_parser.add_argument("--due", help="기한: 'overdue'/'none'/'set'/YYYY-MM-DD/'<=YYYY-MM-DD' 등")
+    list_parser.add_argument("--sp", help="스토리포인트: 정수(3) / 비교('>=3','<=8','>0','<13') / 'none' / 'set'")
     list_parser.add_argument("--query", help="제목/본문 텍스트 검색")
     list_parser.add_argument("--jql", dest="raw_jql", help="JQL 직접 작성 (다른 필터 무시)")
-    list_parser.add_argument("--limit", type=int, default=20, help="결과 수 상한 (기본 20)")
+    list_parser.add_argument("--limit", type=int, default=20, help="결과 수 상한 (기본 20). --all 과 함께면 페이지당 크기")
+    list_parser.add_argument("--all", dest="fetch_all", action="store_true", help="모든 페이지 자동 조회 (페이지당 100 max)")
     list_parser.add_argument("--json", dest="as_json", action="store_true", help="원본 JSON 출력")
     list_parser.add_argument("--csv", dest="as_csv", action="store_true", help="CSV 출력 (UTF-8 BOM, Excel 호환)")
     list_parser.add_argument(
@@ -483,12 +486,20 @@ def _cmd_list(args: argparse.Namespace, cfg: TakoConfig) -> int:
         labels=tuple(args.label),
         updated=args.updated,
         created=args.created,
+        due=args.due,
+        sp=args.sp,
         query=args.query,
         raw_jql=args.raw_jql,
     )
 
+    sp_field_id = cfg.jira.custom_fields.get("story_points")
+
     try:
-        jql = build_jql(filters, default_project=cfg.jira.default_project)
+        jql = build_jql(
+            filters,
+            default_project=cfg.jira.default_project,
+            sp_field_id=sp_field_id,
+        )
     except QueryError as exc:
         sys.stderr.write(f"[input] {exc}\n")
         return 2
@@ -496,28 +507,52 @@ def _cmd_list(args: argparse.Namespace, cfg: TakoConfig) -> int:
     creds = _load_credentials_or_guide(args.credentials)
     client = JiraSiteClient(site=cfg.jira.site, creds=creds)
     sys.stderr.write(f"JQL: {jql}\n")
+
+    fields_req = ["summary", "status", "issuetype", "assignee", "created", "updated", "parent", "duedate"]
+    if sp_field_id:
+        fields_req.append(sp_field_id)
+
+    # 페이지네이션
+    page_size = min(args.limit, 100) if not args.fetch_all else 100
+    issues: list[dict[str, Any]] = []
+    token: str | None = None
+    page_n = 0
     try:
-        result = client.search_issues(
-            jql,
-            fields=["summary", "status", "issuetype", "assignee", "created", "updated", "parent"],
-            max_results=args.limit,
-        )
+        while True:
+            page_n += 1
+            if args.fetch_all and page_n > 1:
+                sys.stderr.write(f"  …페이지 {page_n} 조회 중\n")
+            result = client.search_issues(
+                jql, fields=fields_req, max_results=page_size, next_page_token=token
+            )
+            page_issues = result.get("issues") or []
+            issues.extend(page_issues)
+            token = result.get("nextPageToken")
+            if not args.fetch_all:
+                break
+            if not token:
+                break
+            if len(issues) >= args.limit and not args.fetch_all:
+                break
     except JiraApiError as exc:
         sys.stderr.write(f"[jira] {exc}\n")
         return 2
 
-    issues = result.get("issues") or []
+    has_more = bool(token) and not args.fetch_all
 
     # 출력 분기
     if args.as_json:
-        payload = json.dumps({"jql": jql, "issues": issues, "raw": result}, ensure_ascii=False, indent=2)
+        payload = json.dumps(
+            {"jql": jql, "issues": issues, "has_more": has_more},
+            ensure_ascii=False, indent=2,
+        )
         _emit(payload, args.output)
         return 0
 
     if args.as_csv:
         if not issues:
             sys.stderr.write("(결과 없음 — CSV 헤더만 출력)\n")
-        csv_text = issues_to_csv(issues, site=cfg.jira.site)
+        csv_text = issues_to_csv(issues, site=cfg.jira.site, sp_field_id=sp_field_id)
         _emit(csv_text, args.output)
         if args.output:
             sys.stderr.write(f"저장: {args.output}  ({len(issues)} 행)\n")
@@ -527,13 +562,8 @@ def _cmd_list(args: argparse.Namespace, cfg: TakoConfig) -> int:
     if not issues:
         sys.stderr.write("(결과 없음)\n")
         return 0
-    print(_render_list_table(issues))
-    total = result.get("total")
-    has_more = bool(result.get("nextPageToken"))
-    if total is not None:
-        sys.stderr.write(f"\n({len(issues)} / {total} 표시{', 더 있음' if has_more else ''})\n")
-    elif has_more:
-        sys.stderr.write(f"\n({len(issues)} 표시, 더 있음 — --limit 늘리거나 --jql 로 좁히기)\n")
+    print(_render_list_table(issues, sp_field_id=sp_field_id))
+    sys.stderr.write(f"\n({len(issues)} 건{', 더 있음 — --all 로 전체 / --limit 늘리기' if has_more else ''})\n")
     return 0
 
 
@@ -548,7 +578,16 @@ def _emit(text: str, output_path: str | None) -> None:
             sys.stdout.write("\n")
 
 
-def _render_list_table(issues: list[dict[str, Any]]) -> str:
+def _render_list_table(issues: list[dict[str, Any]], *, sp_field_id: str | None = None) -> str:
+    # 컬럼 정의: SP 매핑 있으면 SP 컬럼 추가
+    has_sp = bool(sp_field_id)
+    if has_sp:
+        header = ("KEY", "상태", "유형", "SP", "담당자", "생성", "업데이트", "기한", "제목")
+        widths = (12, 10, 12, 5, 14, 11, 11, 11, 50)
+    else:
+        header = ("KEY", "상태", "유형", "담당자", "생성", "업데이트", "기한", "제목")
+        widths = (12, 10, 12, 14, 11, 11, 11, 55)
+
     rows: list[tuple[str, ...]] = []
     for it in issues:
         f = it.get("fields") or {}
@@ -558,12 +597,14 @@ def _render_list_table(issues: list[dict[str, Any]]) -> str:
         assignee = ((f.get("assignee") or {}).get("displayName")) or "(미할당)"
         created = (f.get("created") or "")[:10]
         updated = (f.get("updated") or "")[:10]
+        duedate = f.get("duedate") or ""
         summary = f.get("summary", "")
-        rows.append((key, status, itype, assignee, created, updated, summary))
-
-    # 단순 컬럼 너비 — 한국어가 섞여 시각 폭이 다를 수 있음. v1.x 는 단순 처리.
-    widths = (12, 10, 12, 14, 11, 11, 60)
-    header = ("KEY", "상태", "유형", "담당자", "생성", "업데이트", "제목")
+        if has_sp:
+            sp_val = f.get(sp_field_id)
+            sp_str = "" if sp_val is None else (str(int(sp_val)) if isinstance(sp_val, (int, float)) else str(sp_val))
+            rows.append((key, status, itype, sp_str, assignee, created, updated, duedate, summary))
+        else:
+            rows.append((key, status, itype, assignee, created, updated, duedate, summary))
 
     def line(row: tuple[str, ...]) -> str:
         out = []

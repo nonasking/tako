@@ -165,9 +165,22 @@ tako list --assignee me --csv --output my-issues.csv
 tako list --assignee me --csv > my-issues.csv   # stdout 리다이렉트도 가능
 ```
 
-지원 인자: `--assignee` (me / 이메일 / accountId), `--project`, `--status` (반복), `--type` (반복), `--parent`, `--label` (반복), `--updated` (`7d`/`1w`/`YYYY-MM-DD`), `--created` (동일 형식), `--query`, `--jql`, `--limit` (기본 20), `--json`, `--csv`, `--output / -o`.
+지원 인자: `--assignee` (me / 이메일 / accountId), `--project`, `--status` (반복), `--type` (반복), `--parent`, `--label` (반복), `--updated` / `--created` (`7d`/`1w`/`YYYY-MM-DD`), `--due` (`overdue` / `none` / `set` / `YYYY-MM-DD` / `<=YYYY-MM-DD` 등), `--sp` (정수 / `>=N` / `<=N` / `none` / `set`), `--query`, `--jql`, `--limit` (기본 20), `--all` (페이지네이션 자동), `--json`, `--csv`, `--output / -o`.
 
-CSV 컬럼: `key, status, type, assignee, created, updated, summary, parent, url`. URL 컬럼이 있어 Excel 에서 *하이퍼링크 클릭* 으로 바로 이동.
+`--all` 은 모든 페이지를 자동 반복 호출 (페이지당 100 max). 큰 결과집합에 주의 — 943건이 약 10페이지에 걸쳐 조회됨.
+
+기본 컬럼: `key, status, type, assignee, created, updated, duedate, summary, parent, url`. 사용자 config 에 `jira.fields.story_points` 매핑이 있으면 `story_points` 컬럼이 `type` 직후에 자동 추가됨. 매핑 없으면 SP 필터·컬럼 비활성 + 안내.
+
+```bash
+# 기한 / SP 필터 예시
+tako list --due overdue                       # 기한 지난 것
+tako list --due "<=2026-06-15"                # 6월 15일까지
+tako list --sp ">=3" --assignee me            # 내 SP 3 이상
+tako list --sp none --status 진행중           # SP 미정 진행중
+
+# 전체 조회 + CSV
+tako list --created 2026-03-01 --all --csv -o issues-since-march.csv
+```
 
 Claude Code 슬래시는 *자연어 → 인자 매핑*:
 ```
