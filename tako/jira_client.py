@@ -137,15 +137,18 @@ class JiraSiteClient:
         *,
         fields: list[str] | None = None,
         max_results: int = 20,
+        next_page_token: str | None = None,
     ) -> dict[str, Any]:
         """POST /rest/api/3/search/jql — JQL 검색.
 
-        반환: {"issues": [...], "total"?: int, "nextPageToken"?: str}
-        v1.x 는 페이지네이션 미지원 — 첫 페이지(max_results 만큼)만 가져옴.
+        반환: {"issues": [...], "nextPageToken"?: str, ...}
+        nextPageToken 이 있으면 더 가져올 수 있음 — 호출자가 반복 호출하며 결과 누적.
         """
         body: dict[str, Any] = {"jql": jql, "maxResults": int(max_results)}
         if fields:
             body["fields"] = list(fields)
+        if next_page_token:
+            body["nextPageToken"] = next_page_token
         resp = self._request("POST", "search/jql", json=body)
         if resp.status_code == 200:
             return resp.json()
