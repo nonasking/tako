@@ -31,6 +31,7 @@ from .fields import (
 )
 from .issue_draft import DraftError, IssueDraft, build_payload, render_preview
 from .jira_client import JiraApiError, JiraSiteClient, markdown_to_adf
+from .list_output import issues_to_csv
 from .list_query import ListFilters, QueryError, build_jql
 from .prompts import ask_choice, ask_multiline, ask_text, confirm, stdin_is_tty
 
@@ -86,6 +87,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     list_parser.add_argument("--jql", dest="raw_jql", help="JQL 직접 작성 (다른 필터 무시)")
     list_parser.add_argument("--limit", type=int, default=20, help="결과 수 상한 (기본 20)")
     list_parser.add_argument("--json", dest="as_json", action="store_true", help="원본 JSON 출력")
+    list_parser.add_argument("--csv", dest="as_csv", action="store_true", help="CSV 출력 (UTF-8 BOM, Excel 호환)")
+    list_parser.add_argument(
+        "-o",
+        "--output",
+        help="파일에 저장 (생략 시 stdout). 예: --csv -o tako-list.csv",
+    )
 
     update_parser = sub.add_parser("update", help="기존 이슈 본문(description) 업데이트")
     update_parser.add_argument("key", help="이슈 키 또는 browse URL")
@@ -462,6 +469,10 @@ def _cmd_update(args: argparse.Namespace, cfg: TakoConfig) -> int:
 
 
 def _cmd_list(args: argparse.Namespace, cfg: TakoConfig) -> int:
+    if args.as_json and args.as_csv:
+        sys.stderr.write("[input] --json 과 --csv 동시 사용 불가.\n")
+        return 2
+
     filters = ListFilters(
         assignee=args.assignee,
         project=args.project,
@@ -495,14 +506,25 @@ def _cmd_list(args: argparse.Namespace, cfg: TakoConfig) -> int:
 
     issues = result.get("issues") or []
 
+    # 출력 분기
     if args.as_json:
-        print(json.dumps({"jql": jql, "issues": issues, "raw": result}, ensure_ascii=False, indent=2))
+        payload = json.dumps({"jql": jql, "issues": issues, "raw": result}, ensure_ascii=False, indent=2)
+        _emit(payload, args.output)
         return 0
 
+    if args.as_csv:
+        if not issues:
+            sys.stderr.write("(결과 없음 — CSV 헤더만 출력)\n")
+        csv_text = issues_to_csv(issues, site=cfg.jira.site)
+        _emit(csv_text, args.output)
+        if args.output:
+            sys.stderr.write(f"저장: {args.output}  ({len(issues)} 행)\n")
+        return 0
+
+    # 기본: 사람 친화 표
     if not issues:
         sys.stderr.write("(결과 없음)\n")
         return 0
-
     print(_render_list_table(issues))
     total = result.get("total")
     has_more = bool(result.get("nextPageToken"))
@@ -511,6 +533,17 @@ def _cmd_list(args: argparse.Namespace, cfg: TakoConfig) -> int:
     elif has_more:
         sys.stderr.write(f"\n({len(issues)} 표시, 더 있음 — --limit 늘리거나 --jql 로 좁히기)\n")
     return 0
+
+
+def _emit(text: str, output_path: str | None) -> None:
+    if output_path:
+        from pathlib import Path
+        Path(output_path).expanduser().write_text(text, encoding="utf-8")
+    else:
+        # stdout 으로 — BOM 포함된 CSV 도 그대로 통과
+        sys.stdout.write(text)
+        if not text.endswith("\n"):
+            sys.stdout.write("\n")
 
 
 def _render_list_table(issues: list[dict[str, Any]]) -> str:
