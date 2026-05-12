@@ -142,6 +142,36 @@ tako update WL-8876 --mode overwrite --body "..."
 
 > 본문에 *영구 기록*되므로 민감 정보·실수 주의. 미리보기 단계에서 반드시 검토.
 
+### E) 티켓 조회·필터링 (`tako list` / `/tako-list`)
+
+```bash
+# 내 티켓 (config.default_project + 자기 자신 자동)
+tako list --assignee me
+
+# 흔한 조합
+tako list --assignee me --status 진행중 --updated 7d
+tako list --type 에픽 --limit 50
+tako list --parent WL-9200          # 자식 이슈들
+tako list --label backend --query 정렬
+
+# 고급 — JQL 직접 (다른 인자 무시)
+tako list --jql "project = WL AND assignee = currentUser() AND duedate < now()"
+
+# 자동화·LLM 용 JSON
+tako list --assignee me --json
+```
+
+지원 인자: `--assignee` (me / 이메일 / accountId), `--project`, `--status` (반복), `--type` (반복), `--parent`, `--label` (반복), `--updated` (`7d`/`1w`/`YYYY-MM-DD`), `--query`, `--jql`, `--limit` (기본 20), `--json`.
+
+Claude Code 슬래시는 *자연어 → 인자 매핑*:
+```
+/tako-list 이번 주 내가 진행한 거
+/tako-list WL-9200 자식 중 에픽
+/tako-list 최근 한 달 진행중 + 라벨 backend
+```
+
+> 담당자 *한국어 이름*은 v1.x 미지원. `me` / 이메일 / accountId 만.
+
 ## 부분 호출 (디버깅·자동화)
 
 ```bash

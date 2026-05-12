@@ -131,6 +131,26 @@ class JiraSiteClient:
             raise JiraApiError(f"이슈를 찾을 수 없음: {key}")
         raise JiraApiError(_format_error(resp))
 
+    def search_issues(
+        self,
+        jql: str,
+        *,
+        fields: list[str] | None = None,
+        max_results: int = 20,
+    ) -> dict[str, Any]:
+        """POST /rest/api/3/search/jql — JQL 검색.
+
+        반환: {"issues": [...], "total"?: int, "nextPageToken"?: str}
+        v1.x 는 페이지네이션 미지원 — 첫 페이지(max_results 만큼)만 가져옴.
+        """
+        body: dict[str, Any] = {"jql": jql, "maxResults": int(max_results)}
+        if fields:
+            body["fields"] = list(fields)
+        resp = self._request("POST", "search/jql", json=body)
+        if resp.status_code == 200:
+            return resp.json()
+        raise JiraApiError(_format_error(resp))
+
 
 def _format_error(resp: requests.Response) -> str:
     code = resp.status_code
