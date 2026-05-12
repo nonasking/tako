@@ -77,7 +77,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
     list_parser = sub.add_parser("list", help="JQL 기반 이슈 검색 + 필터링")
     list_parser.add_argument("--assignee", help="담당자: 'me' / 이메일 / accountId")
-    list_parser.add_argument("--project", help="프로젝트 키 (생략 시 config.default_project)")
+    list_parser.add_argument(
+        "--project",
+        action="append",
+        default=[],
+        help="프로젝트 키 (반복 가능, 예: --project WL --project ABC). 생략 시 config.default_project",
+    )
     list_parser.add_argument("--status", action="append", default=[], help="상태 이름 (반복 가능, 예: --status 진행중)")
     list_parser.add_argument("--type", dest="types", action="append", default=[], help="이슈 유형 (반복 가능, 예: --type 에픽)")
     list_parser.add_argument("--parent", help="부모 이슈 키 (예: WL-9200)")
@@ -479,7 +484,7 @@ def _cmd_list(args: argparse.Namespace, cfg: TakoConfig) -> int:
 
     filters = ListFilters(
         assignee=args.assignee,
-        project=args.project,
+        projects=tuple(args.project),
         statuses=tuple(args.status),
         types=tuple(args.types),
         parent=args.parent,
