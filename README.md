@@ -153,6 +153,7 @@ tako list --assignee me --status 진행중 --updated 7d
 tako list --type 에픽 --limit 50
 tako list --parent WL-9200          # 자식 이슈들
 tako list --label backend --query 정렬
+tako list --project WL --project ABC --assignee me   # 여러 프로젝트 동시
 
 # 고급 — JQL 직접 (다른 인자 무시)
 tako list --jql "project = WL AND assignee = currentUser() AND duedate < now()"
@@ -165,7 +166,7 @@ tako list --assignee me --csv --output my-issues.csv
 tako list --assignee me --csv > my-issues.csv   # stdout 리다이렉트도 가능
 ```
 
-지원 인자: `--assignee` (me / 이메일 / accountId), `--project`, `--status` (반복), `--type` (반복), `--parent`, `--label` (반복), `--updated` / `--created` (`7d`/`1w`/`YYYY-MM-DD`), `--due` (`overdue` / `none` / `set` / `YYYY-MM-DD` / `<=YYYY-MM-DD` 등), `--sp` (정수 / `>=N` / `<=N` / `none` / `set`), `--query`, `--jql`, `--limit` (기본 20), `--all` (페이지네이션 자동), `--json`, `--csv`, `--output / -o`.
+지원 인자: `--assignee` (me / 이메일 / accountId), `--project` (반복, 여러 프로젝트 동시 조회), `--status` (반복), `--type` (반복), `--parent`, `--label` (반복), `--updated` / `--created` (`7d`/`1w`/`YYYY-MM-DD`), `--due` (`overdue` / `none` / `set` / `YYYY-MM-DD` / `<=YYYY-MM-DD` 등), `--sp` (정수 / `>=N` / `<=N` / `none` / `set`), `--query`, `--jql`, `--limit` (기본 20), `--all` (페이지네이션 자동), `--json`, `--csv`, `--output / -o`.
 
 `--all` 은 모든 페이지를 자동 반복 호출 (페이지당 100 max). 큰 결과집합에 주의 — 943건이 약 10페이지에 걸쳐 조회됨.
 
