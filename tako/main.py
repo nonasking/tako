@@ -31,6 +31,7 @@ from .fields import (
 )
 from .issue_draft import DraftError, IssueDraft, build_payload, render_preview
 from .jira_client import JiraApiError, JiraSiteClient, markdown_to_adf
+from .list_query import ListFilters, QueryError, build_jql
 from .prompts import ask_choice, ask_multiline, ask_text, confirm, stdin_is_tty
 
 
@@ -72,6 +73,19 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     show_parser.add_argument("key", help="이슈 키 또는 browse URL (예: WL-8876)")
     show_parser.add_argument("--json", dest="as_json", action="store_true", help="원본 JSON 출력 (LLM/자동화용)")
     show_parser.add_argument("--max-comments", type=int, default=5, help="포함할 최근 코멘트 수 (기본 5, 0 이면 제외)")
+
+    list_parser = sub.add_parser("list", help="JQL 기반 이슈 검색 + 필터링")
+    list_parser.add_argument("--assignee", help="담당자: 'me' / 이메일 / accountId")
+    list_parser.add_argument("--project", help="프로젝트 키 (생략 시 config.default_project)")
+    list_parser.add_argument("--status", action="append", default=[], help="상태 이름 (반복 가능, 예: --status 진행중)")
+    list_parser.add_argument("--type", dest="types", action="append", default=[], help="이슈 유형 (반복 가능, 예: --type 에픽)")
+    list_parser.add_argument("--parent", help="부모 이슈 키 (예: WL-9200)")
+    list_parser.add_argument("--label", action="append", default=[], help="라벨 (반복 가능)")
+    list_parser.add_argument("--updated", help="업데이트 시점: '7d'/'24h'/'2w'/'1m' 또는 'YYYY-MM-DD'")
+    list_parser.add_argument("--query", help="제목/본문 텍스트 검색")
+    list_parser.add_argument("--jql", dest="raw_jql", help="JQL 직접 작성 (다른 필터 무시)")
+    list_parser.add_argument("--limit", type=int, default=20, help="결과 수 상한 (기본 20)")
+    list_parser.add_argument("--json", dest="as_json", action="store_true", help="원본 JSON 출력")
 
     update_parser = sub.add_parser("update", help="기존 이슈 본문(description) 업데이트")
     update_parser.add_argument("key", help="이슈 키 또는 browse URL")
@@ -447,6 +461,84 @@ def _cmd_update(args: argparse.Namespace, cfg: TakoConfig) -> int:
     return 0
 
 
+def _cmd_list(args: argparse.Namespace, cfg: TakoConfig) -> int:
+    filters = ListFilters(
+        assignee=args.assignee,
+        project=args.project,
+        statuses=tuple(args.status),
+        types=tuple(args.types),
+        parent=args.parent,
+        labels=tuple(args.label),
+        updated=args.updated,
+        query=args.query,
+        raw_jql=args.raw_jql,
+    )
+
+    try:
+        jql = build_jql(filters, default_project=cfg.jira.default_project)
+    except QueryError as exc:
+        sys.stderr.write(f"[input] {exc}\n")
+        return 2
+
+    creds = _load_credentials_or_guide(args.credentials)
+    client = JiraSiteClient(site=cfg.jira.site, creds=creds)
+    sys.stderr.write(f"JQL: {jql}\n")
+    try:
+        result = client.search_issues(
+            jql,
+            fields=["summary", "status", "issuetype", "assignee", "updated", "parent"],
+            max_results=args.limit,
+        )
+    except JiraApiError as exc:
+        sys.stderr.write(f"[jira] {exc}\n")
+        return 2
+
+    issues = result.get("issues") or []
+
+    if args.as_json:
+        print(json.dumps({"jql": jql, "issues": issues, "raw": result}, ensure_ascii=False, indent=2))
+        return 0
+
+    if not issues:
+        sys.stderr.write("(결과 없음)\n")
+        return 0
+
+    print(_render_list_table(issues))
+    total = result.get("total")
+    has_more = bool(result.get("nextPageToken"))
+    if total is not None:
+        sys.stderr.write(f"\n({len(issues)} / {total} 표시{', 더 있음' if has_more else ''})\n")
+    elif has_more:
+        sys.stderr.write(f"\n({len(issues)} 표시, 더 있음 — --limit 늘리거나 --jql 로 좁히기)\n")
+    return 0
+
+
+def _render_list_table(issues: list[dict[str, Any]]) -> str:
+    rows: list[tuple[str, str, str, str, str, str]] = []
+    for it in issues:
+        f = it.get("fields") or {}
+        key = it.get("key", "?")
+        status = (f.get("status") or {}).get("name", "?")
+        itype = (f.get("issuetype") or {}).get("name", "?")
+        assignee = ((f.get("assignee") or {}).get("displayName")) or "(미할당)"
+        updated = (f.get("updated") or "")[:10]
+        summary = f.get("summary", "")
+        rows.append((key, status, itype, assignee, updated, summary))
+
+    # 단순 컬럼 너비 — 한국어가 섞여 시각 폭이 다를 수 있음. v1.x 는 단순 처리.
+    widths = (12, 10, 12, 14, 11, 60)
+    header = ("KEY", "상태", "유형", "담당자", "업데이트", "제목")
+
+    def line(row: tuple[str, ...]) -> str:
+        out = []
+        for i, cell in enumerate(row):
+            w = widths[i] if i < len(widths) else 10
+            out.append(cell[: w].ljust(w))
+        return "  ".join(out).rstrip()
+
+    return "\n".join([line(header), line(("-" * 12, "-" * 8, "-" * 8, "-" * 10, "-" * 10, "-" * 30))] + [line(r) for r in rows])
+
+
 def _cmd_show(args: argparse.Namespace, cfg: TakoConfig) -> int:
     key = _extract_key(args.key)
     creds = _load_credentials_or_guide(args.credentials)
@@ -609,6 +701,8 @@ def run(argv: list[str] | None = None) -> int:
             return _cmd_new(args, cfg)
         case "show":
             return _cmd_show(args, cfg)
+        case "list":
+            return _cmd_list(args, cfg)
         case "update":
             return _cmd_update(args, cfg)
         case "preview":
