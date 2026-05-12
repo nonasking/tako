@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 
 _ISSUE_KEY = re.compile(r"^[A-Z][A-Z0-9_]*-\d+$")
+_PROJECT_KEY = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _UPDATED_SHORTHAND = re.compile(r"^(\d+)([dhwm])$")  # 7d, 24h, 2w, 1m
 
 
@@ -18,7 +19,7 @@ _UPDATED_SHORTHAND = re.compile(r"^(\d+)([dhwm])$")  # 7d, 24h, 2w, 1m
 class ListFilters:
     """사용자 인자를 그대로 보존한 필터 묶음."""
     assignee: str | None = None
-    project: str | None = None
+    projects: tuple[str, ...] = ()
     statuses: tuple[str, ...] = ()
     types: tuple[str, ...] = ()
     parent: str | None = None
@@ -38,6 +39,23 @@ class QueryError(Exception):
 def _esc(value: str) -> str:
     """JQL 문자열 리터럴 escape — backslash → \\, double-quote → \\\""""
     return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _project_clause(values: tuple[str, ...]) -> str:
+    """프로젝트 키 검증 후 단일이면 `=`, 여러 개면 `in (...)`."""
+    keys: list[str] = []
+    for v in values:
+        key = v.strip().upper()
+        if not _PROJECT_KEY.match(key):
+            raise QueryError(
+                f"project 키 형식 아님: {v!r} (예: WL, ABC, PROJ_X)"
+            )
+        if key not in keys:
+            keys.append(key)
+    if len(keys) == 1:
+        return f"project = {keys[0]}"
+    items = ", ".join(keys)
+    return f"project in ({items})"
 
 
 def _assignee_clause(value: str) -> str:
@@ -163,9 +181,9 @@ def build_jql(
 
     clauses: list[str] = []
 
-    project = filters.project or default_project
-    if project:
-        clauses.append(f"project = {project}")
+    projects = filters.projects or ((default_project,) if default_project else ())
+    if projects:
+        clauses.append(_project_clause(projects))
 
     if filters.assignee:
         clauses.append(_assignee_clause(filters.assignee))
