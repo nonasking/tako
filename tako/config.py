@@ -28,6 +28,9 @@ class JiraSite:
     # 예: {"story_points": "customfield_10016"}
     # v1.x 는 수동 등록만. v1.2+ 에서 자동 조회로 같은 슬롯 채우는 확장 예정.
     custom_fields: dict[str, str] = field(default_factory=dict)
+    # tako new 인터랙티브에서 담당자 단계 빈 입력 시 적용될 값.
+    # 'me' / 이메일 / accountId 모두 허용. None 이면 빈 입력 = 미할당.
+    default_assignee: str | None = None
 
 
 @dataclass(frozen=True)
@@ -91,6 +94,13 @@ def _build_config(raw: dict[str, Any]) -> TakoConfig:
             raise ConfigError(f"jira.fields.{name} 값이 비었거나 문자열이 아님.")
         custom_fields[str(name)] = cf_id.strip()
 
+    default_assignee_raw = jira_raw.get("default_assignee")
+    default_assignee: str | None = None
+    if default_assignee_raw is not None:
+        if not isinstance(default_assignee_raw, str) or not default_assignee_raw.strip():
+            raise ConfigError("jira.default_assignee 가 문자열이 아니거나 비었음.")
+        default_assignee = default_assignee_raw.strip()
+
     issue_types_raw = raw.get("issue_types") or {}
     if not isinstance(issue_types_raw, dict):
         raise ConfigError("issue_types 가 매핑이 아님.")
@@ -126,6 +136,7 @@ def _build_config(raw: dict[str, Any]) -> TakoConfig:
             default_project=default_project,
             default_issue_type=default_issue_type,
             custom_fields=custom_fields,
+            default_assignee=default_assignee,
         ),
         allowed_issue_types=allowed,
         auto_fill=auto_fill,
@@ -186,7 +197,7 @@ def interactive_init(
             sys.stderr.write("취소.\n")
             raise SystemExit(1)
 
-    sys.stderr.write("tako init — 5개 항목 입력.\n\n")
+    sys.stderr.write("tako init — 5개 항목 + 선택 1개 입력.\n\n")
 
     site = ask_text("Atlassian 도메인 (예: mycompany.atlassian.net)")
     project = ask_text("기본 프로젝트 키 (예: WL)")
@@ -196,13 +207,21 @@ def interactive_init(
         "Atlassian API 토큰 "
         "(https://id.atlassian.com/manage-profile/security/api-tokens)"
     )
+    default_assignee = ask_text(
+        "기본 담당자 (선택, 'me'/이메일/accountId, 없으면 Enter)",
+        default="",
+    ).strip()
+
+    jira_block: dict[str, Any] = {
+        "site": site,
+        "default_project": project,
+        "default_issue_type": issue_type,
+    }
+    if default_assignee:
+        jira_block["default_assignee"] = default_assignee
 
     cfg_dict = {
-        "jira": {
-            "site": site,
-            "default_project": project,
-            "default_issue_type": issue_type,
-        },
+        "jira": jira_block,
         "issue_types": {issue_type: {}},
         "auto_fill_from_session": {
             "summary": True,
