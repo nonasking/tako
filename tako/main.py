@@ -602,6 +602,20 @@ def _cmd_update(args: argparse.Namespace, cfg: TakoConfig) -> int:
     return 0
 
 
+_ALL_KEYWORDS = {"전체", "all", "*"}
+
+
+def _is_all_keyword(value: str | None) -> bool:
+    return bool(value) and value.strip().lower() in _ALL_KEYWORDS
+
+
+def _normalize_multi_filter(values: tuple[str, ...]) -> tuple[str, ...]:
+    """반복 필드 정규화 — '전체'/'all'/'*' 가 들어 있으면 빈 튜플 (조건 안 걸림)."""
+    if any(_is_all_keyword(v) for v in values):
+        return ()
+    return tuple(v for v in values if v and v.strip())
+
+
 def _ask_optional(prompt_text: str) -> str:
     """빈 입력 = 스킵, 값 입력하면 strip 후 반환."""
     return ask_text(prompt_text, default="").strip()
@@ -629,18 +643,32 @@ def _collect_list_filters_interactively(
         raise SystemExit(2)
 
     sys.stderr.write(f"tako list 필터 입력 — 사이트 {cfg.jira.site}\n")
-    sys.stderr.write("빈 입력 = 해당 조건 스킵. 쉼표로 여러 값 가능한 항목 표시.\n\n")
-
-    assignee = args.assignee or _ask_optional(
-        "담당자 (me / 이메일 / accountId, 없으면 Enter)"
-    ) or None
-    projects = tuple(args.project) or _ask_csv_list(
-        f"프로젝트 (쉼표로 여러 개, 없으면 Enter — 기본 {cfg.jira.default_project})"
+    sys.stderr.write(
+        "빈 입력 = 해당 조건 스킵. 쉼표로 여러 값 가능한 항목 표시.\n"
+        "각 항목에 '전체' 또는 'all' 입력 시: 그 조건 무시 (프로젝트는 default_project 도 무시).\n\n"
     )
-    statuses = tuple(args.status) or _ask_csv_list("상태 (쉼표로 여러 개, 예: 진행중,검토대기)")
-    types = tuple(args.types) or _ask_csv_list("이슈 유형 (쉼표로 여러 개, 예: 에픽,기능변경)")
+
+    assignee_raw = args.assignee or _ask_optional(
+        "담당자 (me / 이메일 / accountId, 없으면 Enter)"
+    )
+    assignee = None if _is_all_keyword(assignee_raw) else (assignee_raw or None)
+
+    projects_raw = tuple(args.project) or _ask_csv_list(
+        f"프로젝트 (쉼표로 여러 개, 없으면 Enter — 기본 {cfg.jira.default_project}, '전체' = 사이트 전체)"
+    )
+    all_projects = any(_is_all_keyword(p) for p in projects_raw)
+    projects: tuple[str, ...] = () if all_projects else tuple(p for p in projects_raw if p.strip())
+
+    statuses = _normalize_multi_filter(
+        tuple(args.status) or _ask_csv_list("상태 (쉼표로 여러 개, 예: 진행중,검토대기)")
+    )
+    types = _normalize_multi_filter(
+        tuple(args.types) or _ask_csv_list("이슈 유형 (쉼표로 여러 개, 예: 에픽,기능변경)")
+    )
     parent = args.parent or _ask_optional("부모 이슈 키 (예: WL-9200)") or None
-    labels = tuple(args.label) or _ask_csv_list("라벨 (쉼표로 여러 개)")
+    labels = _normalize_multi_filter(
+        tuple(args.label) or _ask_csv_list("라벨 (쉼표로 여러 개)")
+    )
     updated = args.updated or _ask_optional(
         "업데이트 (7d / 24h / 2w / 1m / YYYY-MM-DD)"
     ) or None
@@ -657,16 +685,24 @@ def _collect_list_filters_interactively(
 
     # 출력 옵션
     sys.stderr.write("\n[출력]\n")
-    limit_raw = _ask_optional(f"최대 결과 수 (기본 {args.limit})")
-    try:
-        limit = int(limit_raw) if limit_raw else args.limit
-    except ValueError:
-        sys.stderr.write(f"숫자가 아님: {limit_raw!r} — 기본 {args.limit} 사용\n")
-        limit = args.limit
-
+    limit = args.limit
     fetch_all = args.fetch_all
     if not fetch_all:
-        fetch_all = confirm("모든 페이지 자동 조회 (--all)?", default=False)
+        limit_raw = _ask_optional(
+            f"최대 결과 수 (정수 / '전체' / 'all', 기본 {args.limit})"
+        )
+        if _is_all_keyword(limit_raw):
+            fetch_all = True
+            limit = 100  # 페이지당 사이즈 (Jira max). '전체' 면 페이지네이션 자동.
+            sys.stderr.write("→ 자동 페이지네이션 모드 (페이지당 100개씩 끝까지)\n")
+        elif limit_raw:
+            try:
+                limit = int(limit_raw)
+            except ValueError:
+                sys.stderr.write(f"숫자가 아님: {limit_raw!r} — 기본 {args.limit} 사용\n")
+        # fetch_all 단계는 '전체' 키워드로 처리했으면 스킵. 아니면 한 번 확인.
+        if not fetch_all:
+            fetch_all = confirm("모든 페이지 자동 조회 (--all)?", default=False)
 
     if args.as_csv or args.as_json:
         as_csv = args.as_csv
@@ -694,6 +730,7 @@ def _collect_list_filters_interactively(
         sp=sp,
         query=query,
         raw_jql=args.raw_jql,
+        all_projects=all_projects,
     )
     opts = ListOutputOpts(
         limit=limit,
@@ -714,8 +751,11 @@ def _filters_to_shell_hint(filters: ListFilters, opts: ListOutputOpts) -> str:
         return " ".join(parts)
     if filters.assignee:
         parts += ["--assignee", shlex.quote(filters.assignee)]
-    for p in filters.projects:
-        parts += ["--project", shlex.quote(p)]
+    if filters.all_projects:
+        parts += ["--project", "전체"]
+    else:
+        for p in filters.projects:
+            parts += ["--project", shlex.quote(p)]
     for s in filters.statuses:
         parts += ["--status", shlex.quote(s)]
     for t in filters.types:
@@ -759,19 +799,23 @@ def _cmd_list(args: argparse.Namespace, cfg: TakoConfig) -> int:
             sys.stderr.write(f"[input] {exc}\n")
             return 2
     else:
+        projects_raw = tuple(args.project)
+        all_projects = any(_is_all_keyword(p) for p in projects_raw)
+        projects: tuple[str, ...] = () if all_projects else tuple(p for p in projects_raw if p and p.strip())
         filters = ListFilters(
-            assignee=args.assignee,
-            projects=tuple(args.project),
-            statuses=tuple(args.status),
-            types=tuple(args.types),
+            assignee=None if _is_all_keyword(args.assignee) else args.assignee,
+            projects=projects,
+            statuses=_normalize_multi_filter(tuple(args.status)),
+            types=_normalize_multi_filter(tuple(args.types)),
             parent=args.parent,
-            labels=tuple(args.label),
+            labels=_normalize_multi_filter(tuple(args.label)),
             updated=args.updated,
             created=args.created,
             due=args.due,
             sp=args.sp,
             query=args.query,
             raw_jql=args.raw_jql,
+            all_projects=all_projects,
         )
         opts = ListOutputOpts(
             limit=args.limit,
