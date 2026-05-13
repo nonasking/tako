@@ -42,13 +42,14 @@ tako new
 #  제목: ...
 #  본문(마크다운) (Ctrl+D 로 종료): ...
 #  부모 (별칭/키, 없으면 Enter):
+#  담당자 (me / 이메일 / accountId, 없으면 Enter):
 #  스토리포인트 (정수, 없으면 Enter):
 #  기한 YYYY-MM-DD (없으면 Enter):
 #  연결할 티켓 (KEY[:TYPE], 쉼표로 여러 개, 없으면 Enter):
 #  → 미리보기 → Jira 에 생성? (Y/n)
 
 # 일부만 미리 지정
-tako new --project WL --issue-type 기능변경
+tako new --project WL --issue-type 기능변경 --assignee me
 
 # 모든 인자 + 확인 단계 건너뛰기
 tako new \
@@ -61,6 +62,7 @@ tako new \
 
 ## 기대
 정렬 적용" \
+  --assignee jy@example.com \
   --story-points 3 \
   --duedate 2026-06-15 \
   --link WL-100 \
@@ -68,7 +70,9 @@ tako new \
   --yes
 ```
 
-`--story-points` / `--duedate` / `--link` 는 선택. 인터랙티브 모드에서도 빈 입력으로 두면 스킵된다.
+`--assignee` / `--story-points` / `--duedate` / `--link` 는 선택. 인터랙티브 모드에서도 빈 입력으로 두면 스킵된다.
+
+`--assignee` 는 `me` (자기 자신, `/myself` 한 번 호출), 이메일 (`/user/search` 한 번 호출, 정확히 1건 매칭만 허용), 또는 accountId 직접 입력. 한국어 이름·닉네임은 v1.x 미지원. 이메일 검색은 사이트 GDPR 설정에 따라 막힐 수 있는데 그 때는 accountId 직접 입력으로 우회. config 의 `jira.default_assignee` 에 'me'/이메일/accountId 를 두면 인터랙티브 빈 입력 / `--assignee` 미지정 자동 모드에서 기본값으로 적용된다.
 
 `--link KEY[:TYPE]` 는 반복 가능. TYPE 생략 시 `Relates` 적용. 흔한 TYPE: `Blocks` / `Relates` / `Duplicates` / `Causes` / `Clones` (사이트마다 다름). 본인 사이트 link types 확인:
 

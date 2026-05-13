@@ -53,6 +53,9 @@ class IssueDraft:
     parent_epic: str | None = None
     labels: tuple[str, ...] = ()
     assignee: str | None = None
+    # 미리보기·로그 전용 표시 문자열 ("강민성 (foo@bar.com)" 형태).
+    # 페이로드에는 안 들어감. assignee 가 accountId 라 사용자가 못 알아보는 문제 완화.
+    assignee_label: str | None = None
     story_points: int | None = None
     duedate: str | None = None  # YYYY-MM-DD
     # ((target_key, type_name), ...) — 새 티켓 기준 outward 관계.
@@ -77,6 +80,9 @@ class IssueDraft:
         assignee = data.get("assignee")
         if assignee is not None and not isinstance(assignee, str):
             raise DraftError("assignee 는 문자열이어야 함.")
+        assignee_label = data.get("assignee_label")
+        if assignee_label is not None and not isinstance(assignee_label, str):
+            raise DraftError("assignee_label 는 문자열이어야 함.")
 
         sp_raw = data.get("story_points")
         story_points: int | None = None
@@ -111,6 +117,7 @@ class IssueDraft:
             parent_epic=(parent.strip() if parent else None) or None,
             labels=tuple(label.strip() for label in labels_raw if label.strip()),
             assignee=(assignee.strip() if assignee else None) or None,
+            assignee_label=(assignee_label.strip() if assignee_label else None) or None,
             story_points=story_points,
             duedate=duedate,
             links=tuple(links),
@@ -139,6 +146,7 @@ def build_payload(
     if draft.labels:
         fields_block["labels"] = list(draft.labels)
     if draft.assignee:
+        # draft.assignee_label 은 표시 전용 — 페이로드에는 accountId 만 실음.
         fields_block["assignee"] = {"accountId": draft.assignee}
     if draft.duedate:
         fields_block["duedate"] = draft.duedate
@@ -179,7 +187,7 @@ def render_preview(draft: IssueDraft) -> str:
     if draft.labels:
         lines.append(f"라벨:    {', '.join(draft.labels)}")
     if draft.assignee:
-        lines.append(f"담당자:   {draft.assignee}")
+        lines.append(f"담당자:   {draft.assignee_label or draft.assignee}")
     if draft.story_points is not None:
         lines.append(f"SP:      {draft.story_points}")
     if draft.duedate:

@@ -55,6 +55,10 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     new_parser.add_argument("--summary")
     new_parser.add_argument("--description")
     new_parser.add_argument("--parent")
+    new_parser.add_argument(
+        "--assignee",
+        help="담당자: 'me' / 이메일 / accountId. 생략 시 인터랙티브 단계에서 묻고, 빈 입력은 미할당 (또는 config.default_assignee).",
+    )
     new_parser.add_argument("--label", action="append", default=[], help="라벨 (반복 가능)")
     new_parser.add_argument("--story-points", dest="story_points", type=int, help="스토리포인트 (정수)")
     new_parser.add_argument("--duedate", help="기한 YYYY-MM-DD")
@@ -200,7 +204,13 @@ def _draft_from_dict(data: dict[str, Any], cfg: TakoConfig) -> IssueDraft:
         raise SystemExit(2)
 
 
-def _collect_interactively(cfg: TakoConfig, *, prefilled: dict[str, Any] | None = None) -> IssueDraft:
+def _collect_interactively(
+    cfg: TakoConfig,
+    *,
+    prefilled: dict[str, Any] | None = None,
+    ask_assignee: bool = True,
+) -> dict[str, Any]:
+    """인터랙티브로 입력값 dict 수집. 호출자가 후처리(assignee resolve / IssueDraft 빌드) 책임."""
     sys.stderr.write(f"tako 입력 모드 — 사이트 {cfg.jira.site}\n")
     pre = prefilled or {}
 
@@ -220,6 +230,18 @@ def _collect_interactively(cfg: TakoConfig, *, prefilled: dict[str, Any] | None 
     if parent_input is None:
         parent_input = ask_text("부모 (별칭/키, 없으면 Enter)", default="").strip()
     labels: list[str] = list(pre.get("labels") or [])
+    assignee_input: str | None = None
+    if ask_assignee:
+        if "assignee_pending" in pre:
+            assignee_input = pre["assignee_pending"]
+        else:
+            default_a = cfg.jira.default_assignee
+            suffix = f" [{default_a}]" if default_a else ""
+            raw = ask_text(
+                f"담당자 (me / 이메일 / accountId, 없으면 Enter{suffix})",
+                default="",
+            ).strip()
+            assignee_input = raw or default_a or None
 
     # optional 영역
     story_points = pre.get("story_points")
@@ -248,6 +270,9 @@ def _collect_interactively(cfg: TakoConfig, *, prefilled: dict[str, Any] | None 
     resolved_parent = cfg.resolve_epic(parent_input) if parent_input else None
     if resolved_parent:
         payload["parent_epic"] = resolved_parent
+    if assignee_input:
+        # 미해결 입력값만 실어둠. _cmd_new 가 REST 로 해석 후 accountId 로 교체.
+        payload["assignee_pending"] = assignee_input
     if story_points is not None:
         payload["story_points"] = story_points
     if duedate is not None:
@@ -255,11 +280,7 @@ def _collect_interactively(cfg: TakoConfig, *, prefilled: dict[str, Any] | None 
     if links:
         payload["links"] = links
 
-    try:
-        return IssueDraft.from_payload(payload)
-    except DraftError as exc:
-        sys.stderr.write(f"[input] {exc}\n")
-        raise SystemExit(2)
+    return payload  # type: ignore[return-value]
 
 
 def _cmd_preview(cfg: TakoConfig) -> int:
@@ -278,7 +299,13 @@ def _cmd_interactive(cfg: TakoConfig) -> int:
     if not stdin_is_tty():
         sys.stderr.write("interactive 는 TTY 필요. preview/build 사용.\n")
         return 2
-    draft = _collect_interactively(cfg)
+    # interactive 모드는 REST 호출 없이 페이로드만 뽑는 디버깅 경로 — 담당자 단계 생략.
+    payload = _collect_interactively(cfg, ask_assignee=False)
+    try:
+        draft = IssueDraft.from_payload(payload)
+    except DraftError as exc:
+        sys.stderr.write(f"[input] {exc}\n")
+        return 2
     sys.stderr.write("\n")
     print(render_preview(draft))
     sys.stderr.write("\n")
@@ -287,6 +314,77 @@ def _cmd_interactive(cfg: TakoConfig) -> int:
         return 1
     print(json.dumps(build_payload(draft, cfg.jira.custom_fields), ensure_ascii=False, indent=2))
     return 0
+
+
+_ACCOUNT_ID_RE = re.compile(r"^[a-zA-Z0-9:\-]+$")
+
+
+def _resolve_assignee(value: str, client: JiraSiteClient) -> tuple[str, str]:
+    """사용자 입력 (me / 이메일 / accountId) → (accountId, 표시 라벨).
+
+    실패 시 SystemExit(2). 메시지는 호출 전후 맥락이 있는 가정.
+
+    list_query._assignee_clause 와 의도적 분리:
+    저쪽은 JQL 문자열만 만들어 currentUser()/이메일 그대로 두면 Jira 가 해석.
+    여기는 issue 생성 페이로드 fields.assignee 에 *accountId 가 필수* 라서
+    REST 두 번(/myself, /user/search) 으로 직접 해석한다.
+    """
+    v = value.strip()
+    if v.lower() in {"me", "current", "self"}:
+        try:
+            data = client.get_myself()
+        except JiraApiError as exc:
+            sys.stderr.write(f"[담당자] 본인 정보 조회 실패: {exc}\n")
+            raise SystemExit(2)
+        acc = data.get("accountId")
+        if not acc:
+            sys.stderr.write("[담당자] myself 응답에 accountId 없음.\n")
+            raise SystemExit(2)
+        name = data.get("displayName") or "me"
+        email = data.get("emailAddress")
+        label = f"{name}" + (f" ({email})" if email else "")
+        return acc, label
+
+    if "@" in v:
+        try:
+            users = client.search_users(v)
+        except JiraApiError as exc:
+            sys.stderr.write(f"[담당자] 사용자 검색 실패: {exc}\n")
+            raise SystemExit(2)
+        # 이메일 정확 일치 우선
+        matches = [u for u in users if (u.get("emailAddress") or "").lower() == v.lower()]
+        if not matches:
+            matches = users
+        if not matches:
+            sys.stderr.write(
+                f"[담당자] 일치하는 사용자 없음: {v!r}\n"
+                "  사이트 GDPR 설정에 따라 이메일 검색이 제한될 수 있음 — accountId 직접 입력 권장.\n"
+            )
+            raise SystemExit(2)
+        if len(matches) > 1:
+            sys.stderr.write(
+                f"[담당자] 이메일 검색 결과가 {len(matches)}건. 정확히 1건만 허용.\n"
+                "  accountId 직접 입력 또는 다른 검색어 사용.\n"
+            )
+            raise SystemExit(2)
+        u = matches[0]
+        acc = u.get("accountId")
+        if not acc:
+            sys.stderr.write("[담당자] 검색 결과에 accountId 없음.\n")
+            raise SystemExit(2)
+        name = u.get("displayName") or v
+        return acc, f"{name} ({v})"
+
+    if _ACCOUNT_ID_RE.match(v) and len(v) >= 12:
+        # accountId 패턴 — 그대로 사용
+        return v, v
+
+    sys.stderr.write(
+        f"[담당자] 형식 미지원: {value!r}\n"
+        "  지원: 'me' / 이메일 / accountId\n"
+        "  한국어 이름·닉네임은 v1.x 미지원.\n"
+    )
+    raise SystemExit(2)
 
 
 def _cmd_init(args: argparse.Namespace) -> int:
@@ -300,6 +398,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
 
 def _cmd_new(args: argparse.Namespace, cfg: TakoConfig) -> int:
     creds = _load_credentials_or_guide(args.credentials)
+    client = JiraSiteClient(site=cfg.jira.site, creds=creds)
 
     prefilled: dict[str, Any] = {}
     if args.project:
@@ -314,6 +413,8 @@ def _cmd_new(args: argparse.Namespace, cfg: TakoConfig) -> int:
         prefilled["parent_epic"] = args.parent
     if args.label:
         prefilled["labels"] = list(args.label)
+    if args.assignee:
+        prefilled["assignee_pending"] = args.assignee
     if args.story_points is not None:
         prefilled["story_points"] = args.story_points
     if args.duedate:
@@ -329,18 +430,32 @@ def _cmd_new(args: argparse.Namespace, cfg: TakoConfig) -> int:
         return 2
 
     if needs_interactive:
-        draft = _collect_interactively(cfg, prefilled=prefilled)
+        payload = _collect_interactively(cfg, prefilled=prefilled)
     else:
         # 완전 자동 모드: prefilled 만으로 draft. optional 항목 묻지 않음.
-        prefilled.setdefault("project", cfg.jira.default_project)
-        prefilled.setdefault("issue_type", cfg.jira.default_issue_type)
-        if "parent_epic" in prefilled:
-            prefilled["parent_epic"] = cfg.resolve_epic(prefilled["parent_epic"])
-        try:
-            draft = IssueDraft.from_payload(prefilled)
-        except DraftError as exc:
-            sys.stderr.write(f"[input] {exc}\n")
-            return 2
+        payload = dict(prefilled)
+        payload.setdefault("project", cfg.jira.default_project)
+        payload.setdefault("issue_type", cfg.jira.default_issue_type)
+        if "parent_epic" in payload:
+            payload["parent_epic"] = cfg.resolve_epic(payload["parent_epic"])
+        # --assignee 미지정 시 config.default_assignee 적용
+        if "assignee_pending" not in payload and cfg.jira.default_assignee:
+            payload["assignee_pending"] = cfg.jira.default_assignee
+
+    # 담당자 해석 — me/이메일 → accountId. _collect_interactively / args.assignee /
+    # cfg.default_assignee 어느 경로든 미해결 입력은 'assignee_pending' 키로 들어옴.
+    pending = payload.pop("assignee_pending", None)
+    if pending:
+        acc, label = _resolve_assignee(pending, client)
+        payload["assignee"] = acc
+        payload["assignee_label"] = label
+        sys.stderr.write(f"[담당자] {pending} → {label}\n")
+
+    try:
+        draft = IssueDraft.from_payload(payload)
+    except DraftError as exc:
+        sys.stderr.write(f"[input] {exc}\n")
+        return 2
 
     sys.stderr.write("\n")
     print(render_preview(draft), file=sys.stderr)
@@ -357,7 +472,6 @@ def _cmd_new(args: argparse.Namespace, cfg: TakoConfig) -> int:
     fields = built["payload"]["fields"]
     fields["description"] = markdown_to_adf(draft.description)
 
-    client = JiraSiteClient(site=cfg.jira.site, creds=creds)
     try:
         result = client.create_issue(fields)
     except JiraApiError as exc:

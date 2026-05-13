@@ -58,14 +58,18 @@ def _project_clause(values: tuple[str, ...]) -> str:
     return f"project in ({items})"
 
 
+_ACCOUNT_ID_PATTERN = re.compile(r"^[a-zA-Z0-9:\-]+$")
+
+
 def _assignee_clause(value: str) -> str:
+    # 주의: 패턴 변경 시 main._ACCOUNT_ID_RE 도 함께 맞출 것. 같은 도메인 개념.
     value = value.strip()
     if value.lower() in {"me", "current", "self"}:
         return "assignee = currentUser()"
     if "@" in value:  # 이메일
         return f'assignee = "{_esc(value)}"'
-    if re.match(r"^[a-f0-9:\-]+$", value, re.IGNORECASE) and len(value) >= 12:
-        # accountId 패턴 (UUID-ish)
+    if _ACCOUNT_ID_PATTERN.match(value) and len(value) >= 12:
+        # accountId 패턴 ('557058:<uuid>' 또는 24자 hex 등 다양)
         return f'assignee = "{_esc(value)}"'
     raise QueryError(
         f"assignee 값 형식 미지원: {value!r}\n"
