@@ -15,6 +15,9 @@ _PROJECT_KEY = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _UPDATED_SHORTHAND = re.compile(r"^(\d+)([dhwm])$")  # 7d, 24h, 2w, 1m
 
 
+DEFAULT_LIST_LIMIT = 20
+
+
 @dataclass
 class ListFilters:
     """사용자 인자를 그대로 보존한 필터 묶음."""
@@ -30,6 +33,16 @@ class ListFilters:
     sp: str | None = None         # N / >=N / <=N / >N / <N / none
     query: str | None = None
     raw_jql: str | None = None
+
+
+@dataclass(frozen=True)
+class ListOutputOpts:
+    """tako list 의 결과 받는 방식 (필터와 별도). limit/페이지/형식/저장경로."""
+    limit: int = DEFAULT_LIST_LIMIT
+    fetch_all: bool = False
+    as_csv: bool = False
+    as_json: bool = False
+    output: str | None = None
 
 
 class QueryError(Exception):
