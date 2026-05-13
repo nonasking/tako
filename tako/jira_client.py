@@ -118,6 +118,25 @@ class JiraSiteClient:
             return
         raise JiraApiError(_format_error(resp))
 
+    def get_myself(self) -> dict[str, Any]:
+        """GET /rest/api/3/myself — 현재 사용자 정보 (accountId / displayName / emailAddress)."""
+        resp = self._request("GET", "myself")
+        if resp.status_code == 200:
+            return resp.json()
+        raise JiraApiError(_format_error(resp))
+
+    def search_users(self, query: str) -> list[dict[str, Any]]:
+        """GET /rest/api/3/user/search?query=... — 이메일/이름으로 사용자 검색.
+
+        사이트 GDPR 설정에 따라 이메일 기반 검색이 제한될 수 있음. v1 은 이메일만 안내.
+        """
+        from urllib.parse import quote
+        resp = self._request("GET", f"user/search?query={quote(query)}")
+        if resp.status_code != 200:
+            raise JiraApiError(_format_error(resp))
+        data = resp.json()
+        return data if isinstance(data, list) else []
+
     def update_issue_fields(self, key: str, fields: dict[str, Any]) -> None:
         """PUT /rest/api/3/issue/<key> — 필드 업데이트.
 
