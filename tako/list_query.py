@@ -33,6 +33,9 @@ class ListFilters:
     sp: str | None = None         # N / >=N / <=N / >N / <N / none
     query: str | None = None
     raw_jql: str | None = None
+    # 사용자가 '전체'/'all' 명시 시 True — build_jql 이 default_project fallback 도 건너뜀.
+    # 결과: JQL 에 project 절 자체가 빠져 사이트의 모든 프로젝트가 매칭됨.
+    all_projects: bool = False
 
 
 @dataclass(frozen=True)
@@ -198,7 +201,10 @@ def build_jql(
 
     clauses: list[str] = []
 
-    projects = filters.projects or ((default_project,) if default_project else ())
+    if filters.all_projects:
+        projects: tuple[str, ...] = ()  # default_project fallback 도 건너뜀
+    else:
+        projects = filters.projects or ((default_project,) if default_project else ())
     if projects:
         clauses.append(_project_clause(projects))
 
