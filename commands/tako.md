@@ -54,6 +54,7 @@ argument-hint: [세션 맥락 기반으로 만들 거라면 자유 텍스트로 
 
 ```
 선택 항목을 추가하시겠어요? 안 쓰면 비워두세요.
+  - 담당자 (me / 이메일 / accountId, 예: me 또는 jy@example.com):
   - 스토리포인트 (정수, 예: 3):
   - 기한 (YYYY-MM-DD, 예: 2026-06-15):
   - 연결할 티켓 (KEY[:TYPE] 쉼표로 여러 개, 예: WL-200, WL-300:Blocks):
@@ -116,13 +117,15 @@ SUM
 DESC
 )" \
   --parent '<부모 키 또는 별칭>' \
+  --assignee '<me|이메일|accountId, 사용자가 명시했을 때만>' \
   --story-points <정수, 사용자가 명시했을 때만> \
   --duedate <YYYY-MM-DD, 사용자가 명시했을 때만> \
   --link '<KEY[:TYPE], 사용자가 명시했을 때만, 반복 가능>' \
   --yes
 ```
 
-- `--story-points` / `--duedate` / `--link` 는 *1.5 단계에서 사용자가 입력한 값* 또는 *사용자가 발화로 명시한 값* 일 때만 인자에 포함한다. 세션 맥락에서 *추정해서* 채우지 말 것.
+- `--assignee` / `--story-points` / `--duedate` / `--link` 는 *1.5 단계에서 사용자가 입력한 값* 또는 *사용자가 발화로 명시한 값* 일 때만 인자에 포함한다. 세션 맥락에서 *추정해서* 채우지 말 것.
+- `--assignee` 의 한국어 이름은 v1.x 미지원. 사용자가 "민성한테", "주열이가" 같은 한국어 이름으로 말하면 *이메일 또는 accountId 를 받아오라*고 사용자에게 한 번 묻는다.
 - `--link` 의 TYPE 은 생략 시 `Relates`. 사용자가 "blocks", "duplicates" 같은 단어를 쓰면 적절한 영문 TYPE 으로 변환 (`Blocks` / `Duplicates` 등).
 - `--yes` 를 붙이는 이유: 미리보기·확인 단계는 *이 슬래시 커맨드가 이미 처리*했으므로 `tako new` 의 자체 확인 단계는 건너뛴다. 두 번 묻지 않는다.
 - description 의 마크다운→ADF 변환은 `tako new` 가 내부적으로 `md-to-adf` 로 처리한다. LLM 이 별도로 변환할 필요는 없다.
