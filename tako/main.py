@@ -32,7 +32,7 @@ from .fields import (
 from .issue_draft import DraftError, IssueDraft, build_payload, render_preview
 from .jira_client import JiraApiError, JiraSiteClient, markdown_to_adf
 from .list_output import issues_to_csv
-from .list_query import ListFilters, QueryError, build_jql
+from .list_query import DEFAULT_LIST_LIMIT, ListFilters, ListOutputOpts, QueryError, build_jql
 from .prompts import ask_choice, ask_multiline, ask_text, confirm, stdin_is_tty
 
 
@@ -97,7 +97,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     list_parser.add_argument("--sp", help="스토리포인트: 정수(3) / 비교('>=3','<=8','>0','<13') / 'none' / 'set'")
     list_parser.add_argument("--query", help="제목/본문 텍스트 검색")
     list_parser.add_argument("--jql", dest="raw_jql", help="JQL 직접 작성 (다른 필터 무시)")
-    list_parser.add_argument("--limit", type=int, default=20, help="결과 수 상한 (기본 20). --all 과 함께면 페이지당 크기")
+    list_parser.add_argument(
+        "--limit",
+        type=int,
+        default=DEFAULT_LIST_LIMIT,
+        help=f"결과 수 상한 (기본 {DEFAULT_LIST_LIMIT}). --all 과 함께면 페이지당 크기",
+    )
     list_parser.add_argument("--all", dest="fetch_all", action="store_true", help="모든 페이지 자동 조회 (페이지당 100 max)")
     list_parser.add_argument("--json", dest="as_json", action="store_true", help="원본 JSON 출력")
     list_parser.add_argument("--csv", dest="as_csv", action="store_true", help="CSV 출력 (UTF-8 BOM, Excel 호환)")
@@ -105,6 +110,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "-o",
         "--output",
         help="파일에 저장 (생략 시 stdout). 예: --csv -o tako-list.csv",
+    )
+    list_parser.add_argument(
+        "-i",
+        "--wizard",
+        action="store_true",
+        help="필터 인터랙티브 입력 (옵트인). CLI 인자도 같이 주면 그 항목은 묻지 않음.",
     )
 
     update_parser = sub.add_parser("update", help="기존 이슈 본문(description) 업데이트")
@@ -591,25 +602,184 @@ def _cmd_update(args: argparse.Namespace, cfg: TakoConfig) -> int:
     return 0
 
 
+def _ask_optional(prompt_text: str) -> str:
+    """빈 입력 = 스킵, 값 입력하면 strip 후 반환."""
+    return ask_text(prompt_text, default="").strip()
+
+
+def _ask_csv_list(prompt_text: str) -> tuple[str, ...]:
+    """쉼표로 구분된 입력 → 튜플. 빈 입력이면 ()."""
+    raw = _ask_optional(prompt_text)
+    if not raw:
+        return ()
+    return tuple(s.strip() for s in raw.split(",") if s.strip())
+
+
+def _collect_list_filters_interactively(
+    args: argparse.Namespace, cfg: TakoConfig
+) -> tuple[ListFilters, ListOutputOpts]:
+    """CLI 인자에 비어 있는 항목만 단계별로 묻고 (filters, opts) 반환.
+
+    의도된 차이 — `_collect_interactively` (new) 는 dict 를 받고 dict 를 반환한다.
+    new 쪽은 stdin JSON 진입점(`tako preview` / `tako build`)을 같이 쓰므로 dict 가 외부
+    인터페이스. list 는 그 진입점이 없고 CLI args 와 1:1 매핑이라 args 를 직접 본다.
+    """
+    if not stdin_is_tty():
+        sys.stderr.write("--wizard 는 TTY 필요. 인자로 직접 지정 또는 TTY 환경에서 실행.\n")
+        raise SystemExit(2)
+
+    sys.stderr.write(f"tako list 필터 입력 — 사이트 {cfg.jira.site}\n")
+    sys.stderr.write("빈 입력 = 해당 조건 스킵. 쉼표로 여러 값 가능한 항목 표시.\n\n")
+
+    assignee = args.assignee or _ask_optional(
+        "담당자 (me / 이메일 / accountId, 없으면 Enter)"
+    ) or None
+    projects = tuple(args.project) or _ask_csv_list(
+        f"프로젝트 (쉼표로 여러 개, 없으면 Enter — 기본 {cfg.jira.default_project})"
+    )
+    statuses = tuple(args.status) or _ask_csv_list("상태 (쉼표로 여러 개, 예: 진행중,검토대기)")
+    types = tuple(args.types) or _ask_csv_list("이슈 유형 (쉼표로 여러 개, 예: 에픽,기능변경)")
+    parent = args.parent or _ask_optional("부모 이슈 키 (예: WL-9200)") or None
+    labels = tuple(args.label) or _ask_csv_list("라벨 (쉼표로 여러 개)")
+    updated = args.updated or _ask_optional(
+        "업데이트 (7d / 24h / 2w / 1m / YYYY-MM-DD)"
+    ) or None
+    created = args.created or _ask_optional(
+        "생성 (7d / 24h / 2w / 1m / YYYY-MM-DD)"
+    ) or None
+    due = args.due or _ask_optional(
+        "기한 (overdue / none / set / YYYY-MM-DD / '<=YYYY-MM-DD')"
+    ) or None
+    sp = args.sp or _ask_optional(
+        "스토리포인트 (정수 / >=N / <=N / none / set)"
+    ) or None
+    query = args.query or _ask_optional("텍스트 검색 (제목/본문)") or None
+
+    # 출력 옵션
+    sys.stderr.write("\n[출력]\n")
+    limit_raw = _ask_optional(f"최대 결과 수 (기본 {args.limit})")
+    try:
+        limit = int(limit_raw) if limit_raw else args.limit
+    except ValueError:
+        sys.stderr.write(f"숫자가 아님: {limit_raw!r} — 기본 {args.limit} 사용\n")
+        limit = args.limit
+
+    fetch_all = args.fetch_all
+    if not fetch_all:
+        fetch_all = confirm("모든 페이지 자동 조회 (--all)?", default=False)
+
+    if args.as_csv or args.as_json:
+        as_csv = args.as_csv
+        as_json = args.as_json
+    else:
+        fmt = _ask_optional("출력 형식 (text / csv / json) [text]") or "text"
+        as_csv = fmt == "csv"
+        as_json = fmt == "json"
+
+    output = args.output
+    if not output and (as_csv or as_json):
+        path_raw = _ask_optional("파일로 저장 (없으면 stdout)")
+        output = path_raw or None
+
+    filters = ListFilters(
+        assignee=assignee,
+        projects=projects,
+        statuses=statuses,
+        types=types,
+        parent=parent,
+        labels=labels,
+        updated=updated,
+        created=created,
+        due=due,
+        sp=sp,
+        query=query,
+        raw_jql=args.raw_jql,
+    )
+    opts = ListOutputOpts(
+        limit=limit,
+        fetch_all=fetch_all,
+        as_csv=as_csv,
+        as_json=as_json,
+        output=output,
+    )
+    return filters, opts
+
+
+def _filters_to_shell_hint(filters: ListFilters, opts: ListOutputOpts) -> str:
+    """filters + opts → 'tako list ...' 셸 명령 한 줄. 사용자가 alias 로 저장하라고 보여줌."""
+    import shlex
+    parts = ["tako list"]
+    if filters.raw_jql:
+        parts += ["--jql", shlex.quote(filters.raw_jql)]
+        return " ".join(parts)
+    if filters.assignee:
+        parts += ["--assignee", shlex.quote(filters.assignee)]
+    for p in filters.projects:
+        parts += ["--project", shlex.quote(p)]
+    for s in filters.statuses:
+        parts += ["--status", shlex.quote(s)]
+    for t in filters.types:
+        parts += ["--type", shlex.quote(t)]
+    if filters.parent:
+        parts += ["--parent", shlex.quote(filters.parent)]
+    for lb in filters.labels:
+        parts += ["--label", shlex.quote(lb)]
+    if filters.updated:
+        parts += ["--updated", shlex.quote(filters.updated)]
+    if filters.created:
+        parts += ["--created", shlex.quote(filters.created)]
+    if filters.due:
+        parts += ["--due", shlex.quote(filters.due)]
+    if filters.sp:
+        parts += ["--sp", shlex.quote(filters.sp)]
+    if filters.query:
+        parts += ["--query", shlex.quote(filters.query)]
+    if opts.limit != DEFAULT_LIST_LIMIT:
+        parts += ["--limit", str(opts.limit)]
+    if opts.fetch_all:
+        parts.append("--all")
+    if opts.as_csv:
+        parts.append("--csv")
+    elif opts.as_json:
+        parts.append("--json")
+    if opts.output:
+        parts += ["-o", shlex.quote(opts.output)]
+    return " ".join(parts)
+
+
 def _cmd_list(args: argparse.Namespace, cfg: TakoConfig) -> int:
     if args.as_json and args.as_csv:
         sys.stderr.write("[input] --json 과 --csv 동시 사용 불가.\n")
         return 2
 
-    filters = ListFilters(
-        assignee=args.assignee,
-        projects=tuple(args.project),
-        statuses=tuple(args.status),
-        types=tuple(args.types),
-        parent=args.parent,
-        labels=tuple(args.label),
-        updated=args.updated,
-        created=args.created,
-        due=args.due,
-        sp=args.sp,
-        query=args.query,
-        raw_jql=args.raw_jql,
-    )
+    if args.wizard:
+        try:
+            filters, opts = _collect_list_filters_interactively(args, cfg)
+        except QueryError as exc:
+            sys.stderr.write(f"[input] {exc}\n")
+            return 2
+    else:
+        filters = ListFilters(
+            assignee=args.assignee,
+            projects=tuple(args.project),
+            statuses=tuple(args.status),
+            types=tuple(args.types),
+            parent=args.parent,
+            labels=tuple(args.label),
+            updated=args.updated,
+            created=args.created,
+            due=args.due,
+            sp=args.sp,
+            query=args.query,
+            raw_jql=args.raw_jql,
+        )
+        opts = ListOutputOpts(
+            limit=args.limit,
+            fetch_all=args.fetch_all,
+            as_csv=args.as_csv,
+            as_json=args.as_json,
+            output=args.output,
+        )
 
     sp_field_id = cfg.jira.custom_fields.get("story_points")
 
@@ -631,15 +801,21 @@ def _cmd_list(args: argparse.Namespace, cfg: TakoConfig) -> int:
     if sp_field_id:
         fields_req.append(sp_field_id)
 
+    limit = opts.limit
+    fetch_all = opts.fetch_all
+    as_csv = opts.as_csv
+    as_json = opts.as_json
+    output_path = opts.output
+
     # 페이지네이션
-    page_size = min(args.limit, 100) if not args.fetch_all else 100
+    page_size = min(limit, 100) if not fetch_all else 100
     issues: list[dict[str, Any]] = []
     token: str | None = None
     page_n = 0
     try:
         while True:
             page_n += 1
-            if args.fetch_all and page_n > 1:
+            if fetch_all and page_n > 1:
                 sys.stderr.write(f"  …페이지 {page_n} 조회 중\n")
             result = client.search_issues(
                 jql, fields=fields_req, max_results=page_size, next_page_token=token
@@ -647,42 +823,50 @@ def _cmd_list(args: argparse.Namespace, cfg: TakoConfig) -> int:
             page_issues = result.get("issues") or []
             issues.extend(page_issues)
             token = result.get("nextPageToken")
-            if not args.fetch_all:
+            if not fetch_all:
                 break
             if not token:
                 break
-            if len(issues) >= args.limit and not args.fetch_all:
+            if len(issues) >= limit and not fetch_all:
                 break
     except JiraApiError as exc:
         sys.stderr.write(f"[jira] {exc}\n")
         return 2
 
-    has_more = bool(token) and not args.fetch_all
+    has_more = bool(token) and not fetch_all
 
     # 출력 분기
-    if args.as_json:
+    if as_json:
         payload = json.dumps(
             {"jql": jql, "issues": issues, "has_more": has_more},
             ensure_ascii=False, indent=2,
         )
-        _emit(payload, args.output)
+        _emit(payload, output_path)
+        if args.wizard:
+            sys.stderr.write(f"\n[힌트] 같은 조회 다시 쓰려면:\n  {_filters_to_shell_hint(filters, opts)}\n")
         return 0
 
-    if args.as_csv:
+    if as_csv:
         if not issues:
             sys.stderr.write("(결과 없음 — CSV 헤더만 출력)\n")
         csv_text = issues_to_csv(issues, site=cfg.jira.site, sp_field_id=sp_field_id)
-        _emit(csv_text, args.output)
-        if args.output:
-            sys.stderr.write(f"저장: {args.output}  ({len(issues)} 행)\n")
+        _emit(csv_text, output_path)
+        if output_path:
+            sys.stderr.write(f"저장: {output_path}  ({len(issues)} 행)\n")
+        if args.wizard:
+            sys.stderr.write(f"\n[힌트] 같은 조회 다시 쓰려면:\n  {_filters_to_shell_hint(filters, opts)}\n")
         return 0
 
     # 기본: 사람 친화 표
     if not issues:
         sys.stderr.write("(결과 없음)\n")
+        if args.wizard:
+            sys.stderr.write(f"\n[힌트] 같은 조회 다시 쓰려면:\n  {_filters_to_shell_hint(filters, opts)}\n")
         return 0
     print(_render_list_table(issues, sp_field_id=sp_field_id))
     sys.stderr.write(f"\n({len(issues)} 건{', 더 있음 — --all 로 전체 / --limit 늘리기' if has_more else ''})\n")
+    if args.wizard:
+        sys.stderr.write(f"\n[힌트] 같은 조회 다시 쓰려면:\n  {_filters_to_shell_hint(filters, opts)}\n")
     return 0
 
 

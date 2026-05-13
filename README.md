@@ -170,7 +170,9 @@ tako list --assignee me --csv --output my-issues.csv
 tako list --assignee me --csv > my-issues.csv   # stdout 리다이렉트도 가능
 ```
 
-지원 인자: `--assignee` (me / 이메일 / accountId), `--project` (반복, 여러 프로젝트 동시 조회), `--status` (반복), `--type` (반복), `--parent`, `--label` (반복), `--updated` / `--created` (`7d`/`1w`/`YYYY-MM-DD`), `--due` (`overdue` / `none` / `set` / `YYYY-MM-DD` / `<=YYYY-MM-DD` 등), `--sp` (정수 / `>=N` / `<=N` / `none` / `set`), `--query`, `--jql`, `--limit` (기본 20), `--all` (페이지네이션 자동), `--json`, `--csv`, `--output / -o`.
+지원 인자: `--assignee` (me / 이메일 / accountId), `--project` (반복, 여러 프로젝트 동시 조회), `--status` (반복), `--type` (반복), `--parent`, `--label` (반복), `--updated` / `--created` (`7d`/`1w`/`YYYY-MM-DD`), `--due` (`overdue` / `none` / `set` / `YYYY-MM-DD` / `<=YYYY-MM-DD` 등), `--sp` (정수 / `>=N` / `<=N` / `none` / `set`), `--query`, `--jql`, `--limit` (기본 20), `--all` (페이지네이션 자동), `--json`, `--csv`, `--output / -o`, `--wizard / -i` (인터랙티브 입력).
+
+필터가 길어 한 줄이 부담스러우면 `tako list --wizard` (또는 `-i`) — 항목별로 묻고 빈 입력은 스킵. CLI 인자와 병용 가능 (예: `tako list -i --assignee me` 하면 담당자는 묻지 않고 나머지만). 결과 출력 직후 같은 조회를 만드는 *셸 명령 한 줄* 을 stderr 에 힌트로 찍어줘서 마음에 들면 alias 로 저장 가능.
 
 `--all` 은 모든 페이지를 자동 반복 호출 (페이지당 100 max). 큰 결과집합에 주의 — 943건이 약 10페이지에 걸쳐 조회됨.
 
