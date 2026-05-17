@@ -491,6 +491,11 @@ def _cmd_new(args: argparse.Namespace, cfg: TakoConfig) -> int:
 
     sys.stderr.write(f"\n생성 완료\n  키:   {result.key}\n  링크: {result.url}\n")
 
+    if cfg.jira.auto_copy_url:
+        from .clipboard import copy_to_clipboard
+        if copy_to_clipboard(result.url):
+            sys.stderr.write("  (링크 클립보드 복사됨)\n")
+
     # 연결 처리 — 이슈는 이미 만들어졌으므로 실패해도 rollback 안 함. 보고만.
     link_failures: list[tuple[str, str, str]] = []
     if draft.links:

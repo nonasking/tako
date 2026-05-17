@@ -94,6 +94,8 @@ tako fields set story_points customfield_10016
 
 흐름: 입력 → 미리보기 → Y/n → REST → 키 + 링크. Claude Code 불필요.
 
+생성 직후 티켓 URL 이 시스템 클립보드에 자동 복사된다 (macOS `pbcopy` / Linux `xclip` 또는 `xsel`). 끄려면 config 에 `jira.auto_copy_url: false`. 도구가 없는 환경에서는 조용히 skip — 생성 자체는 영향 없음.
+
 ### B) Claude Code 안에서 (세션 컨텍스트 활용)
 
 ```

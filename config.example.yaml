@@ -20,6 +20,9 @@ jira:
   # 인터랙티브 `tako new` 의 담당자 단계에서 빈 입력 시 적용될 기본값.
   # 'me' / 이메일 / accountId 모두 허용. 빼면 빈 입력 = 미할당.
   # default_assignee: me
+  # 생성된 티켓 URL 을 시스템 클립보드에 자동 복사. 기본 true.
+  # macOS pbcopy / Linux xclip|xsel 자동 분기. 도구 없으면 조용히 skip.
+  # auto_copy_url: false
   # 사용자 환경의 Jira custom field ID 매핑. 사이트마다 ID 가 다르다.
   # 본인 사이트 ID 알아내기:
   #   curl -u "email:token" "https://<site>/rest/api/3/field" \
