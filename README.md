@@ -123,7 +123,7 @@ tako show WL-8876 --max-comments 0 # 코멘트 제외
 
 > 민감 정보 주의: 티켓 본문이 세션에 노출되므로 토큰·비밀번호 포함 티켓에는 신중히 사용 (v1.x 자동 필터 없음).
 
-### D) 기존 티켓 본문 업데이트 (`/tako-update`)
+### D) 기존 티켓 제목/본문 업데이트 (`/tako-update`)
 
 ```
 /tako-update WL-8876
@@ -144,9 +144,17 @@ tako update WL-8876 --section "진행 상황" --body "..."
 
 # 본문 통째 교체 (위험 — 미리보기에서 신중히)
 tako update WL-8876 --mode overwrite --body "..."
+
+# 제목만 변경 (본문 안 건드림)
+tako update WL-8876 --summary "새 제목으로 교체"
+
+# 제목 + 본문 동시 변경
+tako update WL-8876 --summary "새 제목" --body "..." --mode overwrite
 ```
 
-> 본문에 *영구 기록*되므로 민감 정보·실수 주의. 미리보기 단계에서 반드시 검토.
+`--summary` 와 `--body` 중 *최소 하나는* 있어야 함. `--mode` 는 *본문에만* 영향 — 제목은 항상 교체.
+
+> 본문·제목 모두 *영구 기록*되므로 민감 정보·실수 주의. 미리보기 단계에서 반드시 검토.
 
 ### E) 티켓 조회·필터링 (`tako list` / `/tako-list`)
 
