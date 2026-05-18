@@ -31,6 +31,9 @@ class JiraSite:
     # tako new 인터랙티브에서 담당자 단계 빈 입력 시 적용될 값.
     # 'me' / 이메일 / accountId 모두 허용. None 이면 빈 입력 = 미할당.
     default_assignee: str | None = None
+    # tako new 성공 시 생성된 티켓 URL 을 시스템 클립보드에 자동 복사할지.
+    # macOS pbcopy / Linux xclip|xsel 자동 분기. 도구 없으면 조용히 skip.
+    auto_copy_url: bool = True
 
 
 @dataclass(frozen=True)
@@ -101,6 +104,10 @@ def _build_config(raw: dict[str, Any]) -> TakoConfig:
             raise ConfigError("jira.default_assignee 가 문자열이 아니거나 비었음.")
         default_assignee = default_assignee_raw.strip()
 
+    auto_copy_url_raw = jira_raw.get("auto_copy_url", True)
+    if not isinstance(auto_copy_url_raw, bool):
+        raise ConfigError("jira.auto_copy_url 은 true / false 여야 함.")
+
     issue_types_raw = raw.get("issue_types") or {}
     if not isinstance(issue_types_raw, dict):
         raise ConfigError("issue_types 가 매핑이 아님.")
@@ -137,6 +144,7 @@ def _build_config(raw: dict[str, Any]) -> TakoConfig:
             default_issue_type=default_issue_type,
             custom_fields=custom_fields,
             default_assignee=default_assignee,
+            auto_copy_url=auto_copy_url_raw,
         ),
         allowed_issue_types=allowed,
         auto_fill=auto_fill,
