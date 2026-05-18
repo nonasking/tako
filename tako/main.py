@@ -118,11 +118,15 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="필터 인터랙티브 입력 (옵트인). CLI 인자도 같이 주면 그 항목은 묻지 않음.",
     )
 
-    update_parser = sub.add_parser("update", help="기존 이슈 본문(description) 업데이트")
+    update_parser = sub.add_parser("update", help="기존 이슈 제목/본문 업데이트")
     update_parser.add_argument("key", help="이슈 키 또는 browse URL")
     update_parser.add_argument(
+        "--summary",
+        help="새 제목으로 교체. --body 와 함께 쓰면 둘 다 변경. 단독으로 쓰면 제목만 변경 (본문 안 건드림)",
+    )
+    update_parser.add_argument(
         "--body",
-        help="추가/덮어쓸 마크다운 본문. 생략하면 stdin 또는 TTY 입력으로 받음",
+        help="추가/덮어쓸 마크다운 본문. --summary 가 있으면 생략 가능, 없으면 stdin 또는 TTY 입력으로 받음",
     )
     update_parser.add_argument(
         "--section",
@@ -554,50 +558,92 @@ def _today_kst_str() -> str:
 
 def _cmd_update(args: argparse.Namespace, cfg: TakoConfig) -> int:
     key = _extract_key(args.key)
-    body_md = _read_body_input(args)
+
+    new_summary: str | None = None
+    if args.summary is not None:
+        stripped = args.summary.strip()
+        if not stripped:
+            sys.stderr.write("[update] --summary 가 빈 문자열. 제목은 비울 수 없음.\n")
+            return 2
+        new_summary = stripped
+
+    # body 입력 결정:
+    # - --body 인자 있음 → 그 값
+    # - --body 없고 --summary 있음 → 본문 안 바꿈 (None)
+    # - 둘 다 없음 → stdin/TTY 로 본문 받기 (기존 흐름)
+    body_md: str | None
+    if args.body is not None:
+        body_md = args.body
+    elif new_summary is not None:
+        body_md = None  # 제목만 변경
+    else:
+        body_md = _read_body_input(args)
+
+    if new_summary is None and body_md is None:
+        sys.stderr.write("[update] --summary 또는 --body 중 최소 하나는 필요.\n")
+        return 2
 
     creds = _load_credentials_or_guide(args.credentials)
     client = JiraSiteClient(site=cfg.jira.site, creds=creds)
 
-    # 현재 본문 조회 (append 모드에서 필요. overwrite 도 미리보기 위해 받아둠)
+    # 현재 상태 조회 — 미리보기·append 머지에 사용.
     try:
         issue = client.get_issue(key)
     except JiraApiError as exc:
         sys.stderr.write(f"[jira] {exc}\n")
         return 2
+    current_summary = (issue.get("fields") or {}).get("summary", "")
     current_md = adf_to_markdown((issue.get("fields") or {}).get("description"))
-    summary = (issue.get("fields") or {}).get("summary", "")
 
-    if args.mode == "append":
-        section_header = f"## {args.section} ({_today_kst_str()})"
-        new_section = f"{section_header}\n{body_md}"
-        merged_md = (current_md.rstrip() + "\n\n" + new_section) if current_md.strip() else new_section
-    else:  # overwrite
-        new_section = body_md
-        merged_md = body_md
+    merged_md: str | None = None
+    new_section: str | None = None
+    if body_md is not None:
+        if args.mode == "append":
+            section_header = f"## {args.section} ({_today_kst_str()})"
+            new_section = f"{section_header}\n{body_md}"
+            merged_md = (current_md.rstrip() + "\n\n" + new_section) if current_md.strip() else new_section
+        else:  # overwrite
+            new_section = body_md
+            merged_md = body_md
 
     # 미리보기
-    sys.stderr.write(f"\n[{key}] {summary}\n")
+    sys.stderr.write(f"\n[{key}] {current_summary}\n")
     sys.stderr.write(f"링크: https://{cfg.jira.site}/browse/{key}\n")
-    sys.stderr.write(f"\n--- 모드: {args.mode} ---\n")
-    if args.mode == "append":
-        sys.stderr.write("\n[추가될 섹션]\n")
-        sys.stderr.write(new_section + "\n")
-    else:
-        sys.stderr.write("\n[현재 본문 → 교체될 것]\n")
-        sys.stderr.write((current_md or "(비어 있음)") + "\n")
-        sys.stderr.write("\n[새 본문]\n")
-        sys.stderr.write(body_md + "\n")
+
+    if new_summary is not None:
+        sys.stderr.write("\n--- 제목 변경 ---\n")
+        sys.stderr.write(f"  현재: {current_summary}\n")
+        sys.stderr.write(f"  변경: {new_summary}\n")
+
+    if body_md is not None:
+        sys.stderr.write(f"\n--- 본문 모드: {args.mode} ---\n")
+        if args.mode == "append":
+            sys.stderr.write("\n[추가될 섹션]\n")
+            sys.stderr.write((new_section or "") + "\n")
+        else:
+            sys.stderr.write("\n[현재 본문 → 교체될 것]\n")
+            sys.stderr.write((current_md or "(비어 있음)") + "\n")
+            sys.stderr.write("\n[새 본문]\n")
+            sys.stderr.write(body_md + "\n")
     sys.stderr.write("\n")
 
     if not args.yes:
-        if not confirm("이대로 본문을 업데이트할까요?"):
+        scope = []
+        if new_summary is not None:
+            scope.append("제목")
+        if body_md is not None:
+            scope.append("본문")
+        if not confirm(f"이대로 {' + '.join(scope)} 을 업데이트할까요?"):
             sys.stderr.write("취소.\n")
             return 1
 
-    adf = markdown_to_adf(merged_md)
+    fields: dict[str, Any] = {}
+    if new_summary is not None:
+        fields["summary"] = new_summary
+    if merged_md is not None:
+        fields["description"] = markdown_to_adf(merged_md)
     try:
-        client.update_issue_fields(key, {"description": adf})
+        client.update_issue_fields(key, fields)
     except JiraApiError as exc:
         sys.stderr.write(f"[jira] {exc}\n")
         return 2
