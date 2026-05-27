@@ -13,6 +13,8 @@ from dataclasses import dataclass
 _ISSUE_KEY = re.compile(r"^[A-Z][A-Z0-9_]*-\d+$")
 _PROJECT_KEY = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _UPDATED_SHORTHAND = re.compile(r"^(\d+)([dhwm])$")  # 7d, 24h, 2w, 1m
+_DATE_ONLY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_DATE_WITH_OP = re.compile(r"^(<=|>=|<|>)\s*(\d{4}-\d{2}-\d{2})$")
 
 
 DEFAULT_LIST_LIMIT = 20
@@ -95,23 +97,32 @@ def _assignee_clause(value: str) -> str:
 
 
 def _date_clause(field: str, value: str) -> str:
-    """단순 표현 → JQL 절. '<field> >= -<단축>' 또는 '<field> >= "YYYY-MM-DD"'.
+    """단순 표현 → JQL 절.
 
-    지원: '7d'/'24h'/'2w'/'1m' 단축, 또는 'YYYY-MM-DD'.
+    지원:
+      7d / 24h / 2w / 1m   → <field> >= -<단축>   (지난 N 단위)
+      YYYY-MM-DD           → <field> >= "..."     (그 날짜 이후)
+      <=YYYY-MM-DD         → <field> <= "..."
+      <YYYY-MM-DD          → <field> < "..."
+      >=YYYY-MM-DD         → <field> >= "..."
+      >YYYY-MM-DD          → <field> > "..."
+
+    비교 연산자 형식은 `--due` 와 동일 — stale 티켓 쿼리(`updated <= "..."`) 가능.
     """
     value = value.strip()
     if _UPDATED_SHORTHAND.match(value):
         return f"{field} >= -{value}"
-    if re.match(r"^\d{4}-\d{2}-\d{2}$", value):
+    if _DATE_ONLY.match(value):
         return f'{field} >= "{value}"'
+    m = _DATE_WITH_OP.match(value)
+    if m:
+        return f'{field} {m.group(1)} "{m.group(2)}"'
     raise QueryError(
         f"{field} 값 형식 미지원: {value!r}\n"
-        "  지원: '7d'/'24h'/'2w'/'1m' 단축, 또는 'YYYY-MM-DD'"
+        "  지원: '7d'/'24h'/'2w'/'1m' 단축, 'YYYY-MM-DD', '<=YYYY-MM-DD'/'>=YYYY-MM-DD'/'<YYYY-MM-DD'/'>YYYY-MM-DD'"
     )
 
 
-_DATE_ONLY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-_DATE_WITH_OP = re.compile(r"^(<=|>=|<|>)\s*(\d{4}-\d{2}-\d{2})$")
 _SP_INT = re.compile(r"^-?\d+$")
 _SP_WITH_OP = re.compile(r"^(<=|>=|<|>)\s*(-?\d+)$")
 
