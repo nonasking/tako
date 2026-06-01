@@ -56,6 +56,9 @@ issue_types:
       ## 실제 동작
 
   # Story, Sub-task, 한국어 커스텀 타입도 동일 형식. v1 코드는 키 이름만 읽음.
+  # 하위 작업(sub-task) 생성에 쓰려면 *사이트에 정의된 정확한 이름*으로 등록.
+  # 예: '하위작업' / 'Sub-task' / '서브태스크'. 본인 사이트 이름은
+  # Jira 의 프로젝트 설정 > 이슈 유형 또는 기존 sub-task 이슈의 type.name 으로 확인.
 
 # 세션 컨텍스트 있을 때 자동 채울 필드.
 auto_fill_from_session:
