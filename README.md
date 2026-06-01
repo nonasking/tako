@@ -51,6 +51,10 @@ tako new
 # 일부만 미리 지정
 tako new --project WL --issue-type 기능변경 --assignee me
 
+# 하위 작업(sub-task) 생성 — 부모 키 + 사이트의 sub-task 이슈 타입 이름
+tako new --project WL --issue-type 하위작업 --parent WL-9058 \
+  --summary "결제 환불 가상계좌 케이스 테스트 추가" --description "..."
+
 # 모든 인자 + 확인 단계 건너뛰기
 tako new \
   --project WL \
@@ -100,9 +104,12 @@ tako fields set story_points customfield_10016
 
 ```
 /tako 방금 발견한 정렬 버그 티켓 끊어. WL 프로젝트, 부모는 infra
+/tako 이거 WL-9058 하위 작업으로 끊어줘    # → 이슈 유형 자동으로 사이트의 sub-task 타입, --parent WL-9058
 ```
 
 LLM 이 세션 내용을 요약 → 미리보기 → 확인 후 `tako new` 호출. 세션 컨텍스트 없을 때는 모드 A 가 더 가볍다.
+
+> 하위 작업 생성에는 사용자 환경 `~/.config/tako/config.yaml` 의 `issue_types` 에 *그 사이트의 sub-task 타입 이름이 등록* 되어 있어야 함 (예: `하위작업`, `Sub-task`, `서브태스크`). 없으면 `tako new` 가 "허용 안 된 이슈 타입" 으로 거부한다.
 
 ### C) 기존 티켓 ↔ 세션 작업 검토 (`/tako-check`)
 
@@ -241,7 +248,7 @@ tako interactive
 
 ## 적용 환경 가정
 
-- 대상 Jira 프로젝트는 team-managed (일반 이슈가 Epic 을 부모로 가지면 `parent` 필드 하나). classic 프로젝트는 v1 미검증.
+- 대상 Jira 프로젝트는 team-managed. 모든 부모-자식 관계가 `parent` 필드 하나로 표현됨 — 일반 이슈가 Epic 아래 (`parent` = Epic 키), *하위 작업(sub-task)* 이 일반 이슈 아래 (`parent` = 일반 이슈 키) 모두 동일 형태. classic 프로젝트는 v1 미검증.
 - description 은 마크다운으로 받아 [`md-to-adf`](https://pypi.org/project/md-to-adf/) 로 ADF 변환 후 전송.
 - v1 은 1인 사용 가정. 팀 공용 설정 오버라이드 / 멀티 사이트 / 사용자별 필드 커스터마이징은 v1.1+ 확장 포인트.
 
