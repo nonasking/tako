@@ -91,9 +91,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     list_parser.add_argument("--type", dest="types", action="append", default=[], help="이슈 유형 (반복 가능, 예: --type 에픽)")
     list_parser.add_argument("--parent", help="부모 이슈 키 (예: WL-9200)")
     list_parser.add_argument("--label", action="append", default=[], help="라벨 (반복 가능)")
-    list_parser.add_argument("--updated", help="업데이트 시점: '7d'/'24h'/'2w'/'1m' 단축, 'YYYY-MM-DD', 또는 비교('<=2026-04-01','>=2026-04-01','<...','>...')")
-    list_parser.add_argument("--created", help="생성 시점: '7d'/'24h'/'2w'/'1m' 단축, 'YYYY-MM-DD', 또는 비교('<=2026-04-01','>=2026-04-01','<...','>...')")
-    list_parser.add_argument("--due", help="기한: 'overdue'/'none'/'set'/YYYY-MM-DD/'<=YYYY-MM-DD' 등")
+    list_parser.add_argument("--updated", help="업데이트 시점: '7d'/'24h'/'2w'/'1m' 단축, 'YYYY-MM-DD', 비교('<=2026-04-01' 등), 범위('2026-05-01..2026-05-15' 또는 '~')")
+    list_parser.add_argument("--created", help="생성 시점: '7d'/'24h'/'2w'/'1m' 단축, 'YYYY-MM-DD', 비교('<=2026-04-01' 등), 범위('2026-05-01..2026-05-15' 또는 '~')")
+    list_parser.add_argument("--due", help="기한: 'overdue'/'none'/'set'/'YYYY-MM-DD'/'<=YYYY-MM-DD' 등, 범위('2026-05-01..2026-05-15' 또는 '~')")
     list_parser.add_argument("--sp", help="스토리포인트: 정수(3) / 비교('>=3','<=8','>0','<13') / 'none' / 'set'")
     list_parser.add_argument("--query", help="제목/본문 텍스트 검색")
     list_parser.add_argument("--jql", dest="raw_jql", help="JQL 직접 작성 (다른 필터 무시)")
@@ -721,13 +721,13 @@ def _collect_list_filters_interactively(
         tuple(args.label) or _ask_csv_list("라벨 (쉼표로 여러 개)")
     )
     updated = args.updated or _ask_optional(
-        "업데이트 (7d / 24h / 2w / 1m / YYYY-MM-DD)"
+        "업데이트 (예: 7d / 2026-05-15 / 2026-05-01..2026-05-15)"
     ) or None
     created = args.created or _ask_optional(
-        "생성 (7d / 24h / 2w / 1m / YYYY-MM-DD)"
+        "생성 (예: 7d / 2026-05-15 / 2026-05-01..2026-05-15)"
     ) or None
     due = args.due or _ask_optional(
-        "기한 (overdue / none / set / YYYY-MM-DD / '<=YYYY-MM-DD')"
+        "기한 (예: overdue / 2026-06-15 / <=2026-06-15 / 2026-06-01..2026-06-30)"
     ) or None
     sp = args.sp or _ask_optional(
         "스토리포인트 (정수 / >=N / <=N / none / set)"

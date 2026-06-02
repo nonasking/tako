@@ -187,7 +187,15 @@ tako list --assignee me --csv --output my-issues.csv
 tako list --assignee me --csv > my-issues.csv   # stdout 리다이렉트도 가능
 ```
 
-지원 인자: `--assignee` (me / 이메일 / accountId), `--project` (반복, 여러 프로젝트 동시 조회), `--status` (반복), `--type` (반복), `--parent`, `--label` (반복), `--updated` / `--created` (`7d`/`1w`/`YYYY-MM-DD` / `<=YYYY-MM-DD` 등 비교), `--due` (`overdue` / `none` / `set` / `YYYY-MM-DD` / `<=YYYY-MM-DD` 등), `--sp` (정수 / `>=N` / `<=N` / `none` / `set`), `--query`, `--jql`, `--limit` (기본 20), `--all` (페이지네이션 자동), `--json`, `--csv`, `--output / -o`, `--wizard / -i` (인터랙티브 입력).
+지원 인자: `--assignee` (me / 이메일 / accountId), `--project` (반복, 여러 프로젝트 동시 조회), `--status` (반복), `--type` (반복), `--parent`, `--label` (반복), `--updated` / `--created` (`7d`/`1w`/`YYYY-MM-DD` / `<=YYYY-MM-DD` 등 비교 / `YYYY-MM-DD..YYYY-MM-DD` 범위), `--due` (`overdue` / `none` / `set` / `YYYY-MM-DD` / `<=YYYY-MM-DD` 등 / 범위), `--sp` (정수 / `>=N` / `<=N` / `none` / `set`), `--query`, `--jql`, `--limit` (기본 20), `--all` (페이지네이션 자동), `--json`, `--csv`, `--output / -o`, `--wizard / -i` (인터랙티브 입력).
+
+`--updated` / `--created` / `--due` 의 *범위* 표현은 `YYYY-MM-DD..YYYY-MM-DD` 또는 `YYYY-MM-DD~YYYY-MM-DD` (alias), 양 끝 포함. 단축형(`7d`) 과 섞을 수는 없다. 시작이 끝보다 늦으면 거부.
+
+```bash
+tako list --updated 2026-05-01..2026-05-15     # 5/1 ~ 5/15 업데이트된 것
+tako list --created 2026-03-01~2026-03-31      # 3월 한 달 동안 만들어진 것
+tako list --due 2026-06-01..2026-06-30         # 6월 기한
+```
 
 필터가 길어 한 줄이 부담스러우면 `tako list --wizard` (또는 `-i`) — 항목별로 묻고 빈 입력은 스킵. CLI 인자와 병용 가능 (예: `tako list -i --assignee me` 하면 담당자는 묻지 않고 나머지만). 결과 출력 직후 같은 조회를 만드는 *셸 명령 한 줄* 을 stderr 에 힌트로 찍어줘서 마음에 들면 alias 로 저장 가능.
 
