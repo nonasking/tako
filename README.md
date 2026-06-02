@@ -51,6 +51,10 @@ tako new
 # 일부만 미리 지정
 tako new --project WL --issue-type 기능변경 --assignee me
 
+# 하위 작업(sub-task) 생성 — 부모 키 + 사이트의 sub-task 이슈 타입 이름
+tako new --project WL --issue-type 하위작업 --parent WL-9058 \
+  --summary "결제 환불 가상계좌 케이스 테스트 추가" --description "..."
+
 # 모든 인자 + 확인 단계 건너뛰기
 tako new \
   --project WL \
@@ -100,9 +104,12 @@ tako fields set story_points customfield_10016
 
 ```
 /tako 방금 발견한 정렬 버그 티켓 끊어. WL 프로젝트, 부모는 infra
+/tako 이거 WL-9058 하위 작업으로 끊어줘    # → 이슈 유형 자동으로 사이트의 sub-task 타입, --parent WL-9058
 ```
 
 LLM 이 세션 내용을 요약 → 미리보기 → 확인 후 `tako new` 호출. 세션 컨텍스트 없을 때는 모드 A 가 더 가볍다.
+
+> 하위 작업 생성에는 사용자 환경 `~/.config/tako/config.yaml` 의 `issue_types` 에 *그 사이트의 sub-task 타입 이름이 등록* 되어 있어야 함 (예: `하위작업`, `Sub-task`, `서브태스크`). 없으면 `tako new` 가 "허용 안 된 이슈 타입" 으로 거부한다.
 
 ### C) 기존 티켓 ↔ 세션 작업 검토 (`/tako-check`)
 
@@ -180,7 +187,15 @@ tako list --assignee me --csv --output my-issues.csv
 tako list --assignee me --csv > my-issues.csv   # stdout 리다이렉트도 가능
 ```
 
-지원 인자: `--assignee` (me / 이메일 / accountId), `--project` (반복, 여러 프로젝트 동시 조회), `--status` (반복), `--type` (반복), `--parent`, `--label` (반복), `--updated` / `--created` (`7d`/`1w`/`YYYY-MM-DD` / `<=YYYY-MM-DD` 등 비교), `--due` (`overdue` / `none` / `set` / `YYYY-MM-DD` / `<=YYYY-MM-DD` 등), `--sp` (정수 / `>=N` / `<=N` / `none` / `set`), `--query`, `--jql`, `--limit` (기본 20), `--all` (페이지네이션 자동), `--json`, `--csv`, `--output / -o`, `--wizard / -i` (인터랙티브 입력).
+지원 인자: `--assignee` (me / 이메일 / accountId), `--project` (반복, 여러 프로젝트 동시 조회), `--status` (반복), `--type` (반복), `--parent`, `--label` (반복), `--updated` / `--created` (`7d`/`1w`/`YYYY-MM-DD` / `<=YYYY-MM-DD` 등 비교 / `YYYY-MM-DD..YYYY-MM-DD` 범위), `--due` (`overdue` / `none` / `set` / `YYYY-MM-DD` / `<=YYYY-MM-DD` 등 / 범위), `--sp` (정수 / `>=N` / `<=N` / `none` / `set`), `--query`, `--jql`, `--limit` (기본 20), `--all` (페이지네이션 자동), `--json`, `--csv`, `--output / -o`, `--wizard / -i` (인터랙티브 입력).
+
+`--updated` / `--created` / `--due` 의 *범위* 표현은 `YYYY-MM-DD..YYYY-MM-DD` 또는 `YYYY-MM-DD~YYYY-MM-DD` (alias), 양 끝 포함. 단축형(`7d`) 과 섞을 수는 없다. 시작이 끝보다 늦으면 거부.
+
+```bash
+tako list --updated 2026-05-01..2026-05-15     # 5/1 ~ 5/15 업데이트된 것
+tako list --created 2026-03-01~2026-03-31      # 3월 한 달 동안 만들어진 것
+tako list --due 2026-06-01..2026-06-30         # 6월 기한
+```
 
 필터가 길어 한 줄이 부담스러우면 `tako list --wizard` (또는 `-i`) — 항목별로 묻고 빈 입력은 스킵. CLI 인자와 병용 가능 (예: `tako list -i --assignee me` 하면 담당자는 묻지 않고 나머지만). 결과 출력 직후 같은 조회를 만드는 *셸 명령 한 줄* 을 stderr 에 힌트로 찍어줘서 마음에 들면 alias 로 저장 가능.
 
@@ -241,7 +256,7 @@ tako interactive
 
 ## 적용 환경 가정
 
-- 대상 Jira 프로젝트는 team-managed (일반 이슈가 Epic 을 부모로 가지면 `parent` 필드 하나). classic 프로젝트는 v1 미검증.
+- 대상 Jira 프로젝트는 team-managed. 모든 부모-자식 관계가 `parent` 필드 하나로 표현됨 — 일반 이슈가 Epic 아래 (`parent` = Epic 키), *하위 작업(sub-task)* 이 일반 이슈 아래 (`parent` = 일반 이슈 키) 모두 동일 형태. classic 프로젝트는 v1 미검증.
 - description 은 마크다운으로 받아 [`md-to-adf`](https://pypi.org/project/md-to-adf/) 로 ADF 변환 후 전송.
 - v1 은 1인 사용 가정. 팀 공용 설정 오버라이드 / 멀티 사이트 / 사용자별 필드 커스터마이징은 v1.1+ 확장 포인트.
 
