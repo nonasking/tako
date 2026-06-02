@@ -100,16 +100,22 @@ def _date_clause(field: str, value: str) -> str:
     """단순 표현 → JQL 절.
 
     지원:
-      7d / 24h / 2w / 1m   → <field> >= -<단축>   (지난 N 단위)
-      YYYY-MM-DD           → <field> >= "..."     (그 날짜 이후)
-      <=YYYY-MM-DD         → <field> <= "..."
-      <YYYY-MM-DD          → <field> < "..."
-      >=YYYY-MM-DD         → <field> >= "..."
-      >YYYY-MM-DD          → <field> > "..."
+      7d / 24h / 2w / 1m            → <field> >= -<단축>   (지난 N 단위)
+      YYYY-MM-DD                    → <field> >= "..."     (그 날짜 이후)
+      <=YYYY-MM-DD                  → <field> <= "..."
+      <YYYY-MM-DD                   → <field> < "..."
+      >=YYYY-MM-DD                  → <field> >= "..."
+      >YYYY-MM-DD                   → <field> > "..."
+      YYYY-MM-DD..YYYY-MM-DD        → <field> >= A AND <field> <= B  (inclusive)
+      YYYY-MM-DD~YYYY-MM-DD         → 동상 (alias)
 
     비교 연산자 형식은 `--due` 와 동일 — stale 티켓 쿼리(`updated <= "..."`) 가능.
+    범위는 절대 날짜끼리만. 단축형('7d') 과 섞을 수 없음.
     """
     value = value.strip()
+    range_clause = _date_range_clause(field, value)
+    if range_clause is not None:
+        return range_clause
     if _UPDATED_SHORTHAND.match(value):
         return f"{field} >= -{value}"
     if _DATE_ONLY.match(value):
@@ -119,26 +125,45 @@ def _date_clause(field: str, value: str) -> str:
         return f'{field} {m.group(1)} "{m.group(2)}"'
     raise QueryError(
         f"{field} 값 형식 미지원: {value!r}\n"
-        "  지원: '7d'/'24h'/'2w'/'1m' 단축, 'YYYY-MM-DD', '<=YYYY-MM-DD'/'>=YYYY-MM-DD'/'<YYYY-MM-DD'/'>YYYY-MM-DD'"
+        "  지원: '7d'/'24h'/'2w'/'1m' 단축, 'YYYY-MM-DD', '<=YYYY-MM-DD'/'>=YYYY-MM-DD'/'<YYYY-MM-DD'/'>YYYY-MM-DD',\n"
+        "       'YYYY-MM-DD..YYYY-MM-DD' 또는 'YYYY-MM-DD~YYYY-MM-DD' (범위, 양 끝 포함)"
     )
 
 
 _SP_INT = re.compile(r"^-?\d+$")
 _SP_WITH_OP = re.compile(r"^(<=|>=|<|>)\s*(-?\d+)$")
 
+# 범위 — '..' 또는 '~' 구분자, 양 끝 inclusive. 단축형(7d) 과의 조합은 비지원.
+_DATE_RANGE = re.compile(r"^(\d{4}-\d{2}-\d{2})\s*(?:\.\.|~)\s*(\d{4}-\d{2}-\d{2})$")
+
+
+def _date_range_clause(field: str, value: str) -> str | None:
+    """범위 표현이면 inclusive JQL 절, 아니면 None."""
+    m = _DATE_RANGE.match(value)
+    if not m:
+        return None
+    start, end = m.group(1), m.group(2)
+    if start > end:
+        raise QueryError(
+            f"{field} 범위의 시작이 끝보다 늦음: {start} > {end}"
+        )
+    return f'{field} >= "{start}" AND {field} <= "{end}"'
+
 
 def _due_clause(value: str) -> str:
     """기한 통합 표현 → JQL 절.
 
     지원:
-      overdue          → duedate < now()
-      none / empty     → duedate is EMPTY
-      set              → duedate is not EMPTY
-      YYYY-MM-DD       → duedate = "..." (정확 일치)
-      <=YYYY-MM-DD     → duedate <= "..."
-      <YYYY-MM-DD      → duedate < "..."
-      >=YYYY-MM-DD     → duedate >= "..."
-      >YYYY-MM-DD      → duedate > "..."
+      overdue                       → duedate < now()
+      none / empty                  → duedate is EMPTY
+      set                           → duedate is not EMPTY
+      YYYY-MM-DD                    → duedate = "..." (정확 일치)
+      <=YYYY-MM-DD                  → duedate <= "..."
+      <YYYY-MM-DD                   → duedate < "..."
+      >=YYYY-MM-DD                  → duedate >= "..."
+      >YYYY-MM-DD                   → duedate > "..."
+      YYYY-MM-DD..YYYY-MM-DD        → duedate >= A AND duedate <= B  (inclusive)
+      YYYY-MM-DD~YYYY-MM-DD         → 동상 (alias)
     """
     v = value.strip()
     low = v.lower()
@@ -148,6 +173,9 @@ def _due_clause(value: str) -> str:
         return "duedate is EMPTY"
     if low == "set":
         return "duedate is not EMPTY"
+    range_clause = _date_range_clause("duedate", v)
+    if range_clause is not None:
+        return range_clause
     if _DATE_ONLY.match(v):
         return f'duedate = "{v}"'
     m = _DATE_WITH_OP.match(v)
@@ -155,7 +183,8 @@ def _due_clause(value: str) -> str:
         return f'duedate {m.group(1)} "{m.group(2)}"'
     raise QueryError(
         f"due 값 형식 미지원: {value!r}\n"
-        "  지원: 'overdue' / 'none' / 'set' / 'YYYY-MM-DD' / '<=YYYY-MM-DD' / '>YYYY-MM-DD' 등"
+        "  지원: 'overdue' / 'none' / 'set' / 'YYYY-MM-DD' / '<=YYYY-MM-DD' / '>YYYY-MM-DD' /\n"
+        "       'YYYY-MM-DD..YYYY-MM-DD' 또는 'YYYY-MM-DD~YYYY-MM-DD' (범위, 양 끝 포함)"
     )
 
 
