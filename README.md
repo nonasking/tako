@@ -2,6 +2,8 @@
 
 셸 한 줄로 Jira 티켓을 만든다. Claude Code 슬래시 커맨드 위에서 쓸 때는 세션 컨텍스트로 제목·본문 초안을 자동 생성한다. 백엔드는 Atlassian Cloud REST API v3.
 
+> Jira MCP(예: Atlassian 공식 Remote MCP)와의 차이: tako는 LLM이 *본문 초안까지만* 만들고 인증·페이로드·ADF 변환·REST 호출은 결정론적 코드가 처리해, 중간 서버 없이 Jira 에 직결된다 — 그만큼 의존성·토큰이 가볍다. 대신 필드·이슈 타입은 MCP 의 런타임 조회와 달리 설정에 직접 등록해야 한다.
+
 ## 사전 요구사항
 
 - macOS / Linux
