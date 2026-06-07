@@ -29,6 +29,12 @@ from .fields import (
     warn_comment_loss,
     write_field_mapping,
 )
+from .guide import (
+    GuideError,
+    effective_guide,
+    resolve_guide_path,
+    write_default_guide,
+)
 from .issue_draft import DraftError, IssueDraft, build_payload, render_preview
 from .jira_client import JiraApiError, JiraSiteClient, markdown_to_adf
 from .list_output import issues_to_csv
@@ -155,6 +161,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     detect_parser.add_argument(
         "--save", action="store_true", help="찾은 결과를 config 에 자동 쓰기 (주석 손실 주의)"
     )
+
+    guide_parser = sub.add_parser("guide", help="본문 작성 가이드 관리 (개인 커스텀)")
+    guide_sub = guide_parser.add_subparsers(dest="guide_command", required=True)
+    guide_sub.add_parser("show", help="적용 중인 가이드 출력 (개인 없으면 기본값)")
+    guide_init = guide_sub.add_parser("init", help="기본 가이드를 개인 파일로 생성")
+    guide_init.add_argument("--force", action="store_true", help="기존 개인 가이드 덮어쓰기")
+    guide_sub.add_parser("reset", help="개인 가이드를 기본값으로 되돌림")
+    guide_sub.add_parser("path", help="개인 가이드 경로 출력")
 
     return parser.parse_args(argv)
 
@@ -1100,6 +1114,31 @@ def _cmd_fields_set(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_guide(args: argparse.Namespace) -> int:
+    # 가이드 경로는 TAKO_GUIDE_PATH 환경변수 또는 기본 경로로 해석 (config 와 무관).
+    try:
+        if args.guide_command == "show":
+            text, source = effective_guide()
+            sys.stdout.write(text if text.endswith("\n") else text + "\n")
+            sys.stderr.write(
+                "출처: 개인 가이드\n" if source == "personal" else "출처: 기본값 (개인 가이드 없음)\n"
+            )
+            return 0
+        if args.guide_command == "path":
+            sys.stdout.write(f"{resolve_guide_path()}\n")
+            return 0
+        if args.guide_command in ("init", "reset"):
+            force = args.guide_command == "reset" or getattr(args, "force", False)
+            target = write_default_guide(force=force)
+            sys.stderr.write(f"가이드 생성: {target}\n에디터로 직접 편집하거나 /tako-guide 로 수정.\n")
+            return 0
+    except GuideError as exc:
+        sys.stderr.write(f"[guide] {exc}\n")
+        return 2
+    sys.stderr.write(f"unknown guide command: {args.guide_command}\n")
+    return 2
+
+
 def _cmd_fields_detect(args: argparse.Namespace, cfg: TakoConfig) -> int:
     if args.name not in SEARCH_KEYWORDS:
         sys.stderr.write(
@@ -1168,6 +1207,9 @@ def run(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
     if args.command == "init":
         return _cmd_init(args)
+    if args.command == "guide":
+        # config 로드 불필요 — 가이드는 별도 파일.
+        return _cmd_guide(args)
     if args.command == "fields" and args.fields_command == "set":
         # set 은 config 만 건드림 — 로드는 안 함 (없으면 에러 메시지 자체 처리)
         return _cmd_fields_set(args)

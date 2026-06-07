@@ -18,3 +18,6 @@ tako = "tako.main:run"
 
 [tool.setuptools.packages.find]
 include = ["tako*"]
+
+[tool.setuptools.package-data]
+tako = ["templates/*.md"]
