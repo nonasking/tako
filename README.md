@@ -241,6 +241,31 @@ Claude Code 슬래시는 *자연어 → 인자 매핑*:
 
 > 담당자 *한국어 이름*은 v1.x 미지원. `me` / 이메일 / accountId 만.
 
+### F) 본문 작성 가이드 커스텀 (`tako guide` / `/tako-guide`)
+
+`/tako`·`/tako-update` 가 제목·본문을 *어떤 규칙으로* 쓸지는 **개인 가이드 파일** 하나로 정해진다 — `~/.config/tako/body_guide.md`. 제목 형태, 필수 섹션, 작성 톤(기획자도 이해할 평이한 언어·코드 복붙 금지 등), 자가 점검 항목이 전부 이 파일에 들어 있고, 슬래시 커맨드가 본문을 만들기 전에 읽어 그대로 따른다.
+
+파일이 없으면 **기본 가이드**(패키지 동봉)가 적용된다. 본인 팀 스타일로 바꾸고 싶을 때만 개인 파일을 만들면 된다.
+
+```bash
+tako guide show      # 지금 적용 중인 가이드 출력 (개인 파일 없으면 기본값)
+tako guide path      # 개인 가이드 경로 출력
+tako guide init      # 기본 가이드를 개인 파일로 생성 → 에디터로 편집
+tako guide reset     # 개인 가이드를 기본값으로 되돌림
+```
+
+Claude Code 안에서는 대화로 고친다 (미리보기 → 확인 후 저장):
+
+```
+/tako-guide                          # 현재 가이드 보기
+/tako-guide 코드 예시는 허용해줘       # 규칙 일부만 수정
+/tako-guide 본문 더 짧게 쓰도록        # 톤 조정
+/tako-guide 기본값으로 되돌려          # 리셋
+```
+
+> 가이드는 *전부 커스텀* 가능하다 — 필수 섹션·미검증 표현 금지 같은 품질 가드까지 본인이 바꿀 수 있다. 품질 가드를 빼면 인계·추적이 어려워질 수 있어, `/tako-guide` 는 그런 변경 시 한 번 환기한다.
+> 다른 경로를 쓰려면 `TAKO_GUIDE_PATH` 환경변수로 지정.
+
 ## 부분 호출 (디버깅·자동화)
 
 ```bash
@@ -267,8 +292,11 @@ tako interactive
 ```
 tako/
 ├── commands/
-│   ├── tako.md             /tako 슬래시 커맨드
-│   └── tako-check.md       /tako-check 슬래시 커맨드
+│   ├── tako.md             /tako 슬래시 커맨드 (생성)
+│   ├── tako-update.md      /tako-update 슬래시 커맨드 (제목/본문 수정)
+│   ├── tako-check.md       /tako-check 슬래시 커맨드 (검토)
+│   ├── tako-list.md        /tako-list 슬래시 커맨드 (조회)
+│   └── tako-guide.md       /tako-guide 슬래시 커맨드 (본문 가이드 커스텀)
 ├── tako/                   Python 패키지
 │   ├── auth.py              credentials 로드
 │   ├── jira_client.py       REST + ADF 변환 진입점
@@ -277,6 +305,8 @@ tako/
 │   ├── fields.py            custom field 매핑 헬퍼
 │   ├── prompts.py           인터랙티브 입력
 │   ├── config.py            설정 + init 마법사
+│   ├── guide.py             본문 작성 가이드 로드/생성
+│   ├── templates/           기본 가이드 등 동봉 리소스
 │   └── main.py              진입점
 ├── config.example.yaml     설정 예시
 └── install.sh              슬래시 커맨드 등록 (선택)
