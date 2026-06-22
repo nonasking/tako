@@ -1,73 +1,73 @@
 # tako
 
-셸 한 줄로 Jira 티켓을 만든다. Claude Code 슬래시 커맨드 위에서 쓸 때는 세션 컨텍스트로 제목·본문 초안을 자동 생성한다. 백엔드는 Atlassian Cloud REST API v3.
+Create a Jira ticket with one shell line. Used on top of Claude Code slash commands, it auto-drafts the title and body from session context. The backend is the Atlassian Cloud REST API v3.
 
-> Jira MCP(예: Atlassian 공식 Remote MCP)와의 차이: tako는 LLM이 *본문 초안까지만* 만들고 인증·페이로드·ADF 변환·REST 호출은 결정론적 코드가 처리해, 중간 서버 없이 Jira 에 직결된다 — 그만큼 의존성·토큰이 가볍다. 대신 필드·이슈 타입은 MCP 의 런타임 조회와 달리 설정에 직접 등록해야 한다.
+> Difference from a Jira MCP (e.g. Atlassian's official Remote MCP): tako lets the LLM draft *only the body*, while authentication, payload, ADF conversion, and the REST call are handled by deterministic code — so it connects straight to Jira with no intermediate server, keeping dependencies and tokens light. The trade-off: fields and issue types must be registered in config directly, unlike the MCP's runtime lookup.
 
-## 사전 요구사항
+## Prerequisites
 
 - macOS / Linux
 - Python ≥ 3.10
-- Atlassian Cloud 계정 + API 토큰 ([id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens))
-- 선택: [Claude Code](https://docs.anthropic.com/claude-code) — 세션 컨텍스트 모드 쓸 때만
+- An Atlassian Cloud account + API token ([id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens))
+- Optional: [Claude Code](https://docs.anthropic.com/claude-code) — only if you use session-context mode
 
-## 설치
+## Install
 
 ```bash
 git clone <repo-url> tako && cd tako
 pip install -e .
-./install.sh        # 슬래시 커맨드 등록 (선택)
+./install.sh        # register slash commands (optional)
 ```
 
-## 첫 실행
+## First run
 
 ```bash
 tako init
 ```
 
-5개 항목(사이트 도메인 / 기본 프로젝트 / 기본 이슈 타입 / 이메일 / API 토큰) 입력하면 두 파일 생성:
+Enter 5 items (site domain / default project / default issue type / email / API token) and two files are created:
 
-- `~/.config/tako/config.yaml` — 사이트·프로젝트·이슈 타입
-- `~/.config/tako/credentials.json` — 이메일·토큰 (chmod 0600)
+- `~/.config/tako/config.yaml` — site·project·issue types
+- `~/.config/tako/credentials.json` — email·token (chmod 0600)
 
-기존 파일 있으면 덮어쓸지 묻는다. `--force` 로 건너뜀. 수동 작성하려면 [`config.example.yaml`](./config.example.yaml) 복사해서 편집.
+If the files exist, it asks before overwriting. Skip with `--force`. To write them by hand, copy [`config.example.yaml`](./config.example.yaml) and edit.
 
-## 사용 — 두 모드
+## Usage — two modes
 
-### A) 셸에서 직접
+### A) Directly from the shell
 
 ```bash
-# 인터랙티브 (권장) — 아래처럼 차례로 묻는다
+# interactive (recommended) — prompts in order, like this
 tako new
-#  프로젝트 키 [WL]:
-#  이슈 유형 (Task / 기능변경 / 버그수정) [기능변경]:
-#  제목: ...
-#  본문(마크다운) (Ctrl+D 로 종료): ...
-#  부모 (별칭/키, 없으면 Enter):
-#  담당자 (me / 이메일 / accountId, 없으면 Enter):
-#  스토리포인트 (정수, 없으면 Enter):
-#  기한 YYYY-MM-DD (없으면 Enter):
-#  연결할 티켓 (KEY[:TYPE], 쉼표로 여러 개, 없으면 Enter):
-#  → 미리보기 → Jira 에 생성? (Y/n)
+#  Project key [WL]:
+#  Issue type (Task / 기능변경 / 버그수정) [기능변경]:
+#  Summary: ...
+#  Body (markdown) (Ctrl+D to end): ...
+#  Parent (alias/key, Enter for none):
+#  Assignee (me / email / accountId, Enter for none):
+#  Story points (integer, Enter for none):
+#  Due date YYYY-MM-DD (Enter for none):
+#  Tickets to link (KEY[:TYPE], comma-separated, Enter for none):
+#  → preview → create in Jira? (Y/n)
 
-# 일부만 미리 지정
+# pre-specify some of it
 tako new --project WL --issue-type 기능변경 --assignee me
 
-# 하위 작업(sub-task) 생성 — 부모 키 + 사이트의 sub-task 이슈 타입 이름
+# create a sub-task — parent key + the site's sub-task issue-type name
 tako new --project WL --issue-type 하위작업 --parent WL-9058 \
-  --summary "결제 환불 가상계좌 케이스 테스트 추가" --description "..."
+  --summary "add test for the payment-refund virtual-account case" --description "..."
 
-# 모든 인자 + 확인 단계 건너뛰기
+# all args + skip the confirmation step
 tako new \
   --project WL \
   --issue-type 기능변경 \
-  --summary "스프린트 보드 정렬 깨짐" \
-  --description "## 재현
-1. 보드 진입
-2. 정렬 클릭
+  --summary "sprint board sorting is broken" \
+  --description "## Repro
+1. open the board
+2. click sort
 
-## 기대
-정렬 적용" \
+## Expected
+sort is applied" \
   --assignee jy@example.com \
   --story-points 3 \
   --duedate 2026-06-15 \
@@ -76,271 +76,267 @@ tako new \
   --yes
 ```
 
-`--assignee` / `--story-points` / `--duedate` / `--link` 는 선택. 인터랙티브 모드에서도 빈 입력으로 두면 스킵된다.
+`--assignee` / `--story-points` / `--duedate` / `--link` are optional. In interactive mode, leaving the input blank also skips them.
 
-`--assignee` 는 `me` (자기 자신, `/myself` 한 번 호출), 이메일 (`/user/search` 한 번 호출, 정확히 1건 매칭만 허용), 또는 accountId 직접 입력. 한국어 이름·닉네임은 v1.x 미지원. 이메일 검색은 사이트 GDPR 설정에 따라 막힐 수 있는데 그 때는 accountId 직접 입력으로 우회. config 의 `jira.default_assignee` 에 'me'/이메일/accountId 를 두면 인터랙티브 빈 입력 / `--assignee` 미지정 자동 모드에서 기본값으로 적용된다.
+`--assignee` accepts `me` (yourself, one `/myself` call), an email (one `/user/search` call, only an exact single match is allowed), or an accountId directly. Korean names/nicknames are unsupported in v1.x. Email search may be blocked depending on the site's GDPR settings — work around it by entering the accountId directly. Setting `jira.default_assignee` in config to 'me'/email/accountId applies it as the default in interactive blank-input / auto mode where `--assignee` is omitted.
 
-`--link KEY[:TYPE]` 는 반복 가능. TYPE 생략 시 `Relates` 적용. 흔한 TYPE: `Blocks` / `Relates` / `Duplicates` / `Causes` / `Clones` (사이트마다 다름). 본인 사이트 link types 확인:
+`--link KEY[:TYPE]` is repeatable. When TYPE is omitted, `Relates` is applied. Common TYPEs: `Blocks` / `Relates` / `Duplicates` / `Causes` / `Clones` (varies per site). Check your site's link types:
 
 ```bash
 curl -u "email:token" "https://<site>/rest/api/3/issueLinkType" | jq '.issueLinkTypes[].name'
 ```
 
-연결 호출은 *이슈 생성 후 별도 REST*. 이슈 생성은 성공했는데 일부 링크가 실패하면 *티켓은 그대로*, 실패한 링크만 보고하고 종료 코드 1. 스토리포인트를 *실제로 페이로드에 실으려면* config 의 `jira.fields.story_points` 에 사용자 환경의 customfield ID 가 있어야 한다 (없으면 경고 출력 후 SP 만 제외하고 생성). 두 가지 방법:
+The link call is a *separate REST request after issue creation*. If issue creation succeeds but some links fail, the *ticket stays*, only the failed links are reported, and it exits with code 1. To *actually include story points in the payload*, config's `jira.fields.story_points` must hold your environment's customfield ID (without it, a warning is printed and the issue is created with only SP excluded). Two ways:
 
 ```bash
-# 방법 1) 자동 — Jira 에서 후보 찾아서 한 줄로 등록
+# Option 1) auto — find a candidate in Jira and register it in one line
 tako fields detect story_points --save
 
-# 방법 2) ID 를 이미 알고 있으면 직접 등록
+# Option 2) if you already know the ID, register it directly
 tako fields set story_points customfield_10016
 ```
 
-`tako fields detect <name>` 는 `--save` 없이 쓰면 결과만 출력하고 config 는 안 건드림 (config 자동 쓰기 시 주석 손실 가능성 때문). 지원하는 이름: `story_points` (v1.x).
+`tako fields detect <name>` without `--save` only prints the result and doesn't touch config (auto-writing config could lose comments). Supported names: `story_points` (v1.x).
 
-흐름: 입력 → 미리보기 → Y/n → REST → 키 + 링크. Claude Code 불필요.
+Flow: input → preview → Y/n → REST → key + links. No Claude Code needed.
 
-생성 직후 티켓 URL 이 시스템 클립보드에 자동 복사된다 (macOS `pbcopy` / Linux `xclip` 또는 `xsel`). 끄려면 config 에 `jira.auto_copy_url: false`. 도구가 없는 환경에서는 조용히 skip — 생성 자체는 영향 없음.
+Right after creation, the ticket URL is auto-copied to the system clipboard (macOS `pbcopy` / Linux `xclip` or `xsel`). Turn it off with `jira.auto_copy_url: false` in config. In environments without those tools it's silently skipped — creation itself is unaffected.
 
-### B) Claude Code 안에서 (세션 컨텍스트 활용)
+### B) Inside Claude Code (using session context)
 
 ```
-/tako 방금 발견한 정렬 버그 티켓 끊어. WL 프로젝트, 부모는 infra
-/tako 이거 WL-9058 하위 작업으로 끊어줘    # → 이슈 유형 자동으로 사이트의 sub-task 타입, --parent WL-9058
+/tako file a ticket for the sort bug I just found. WL project, parent is infra
+/tako cut this as a sub-task of WL-9058    # → issue type auto-set to the site's sub-task type, --parent WL-9058
 ```
 
-LLM 이 세션 내용을 요약 → 미리보기 → 확인 후 `tako new` 호출. 세션 컨텍스트 없을 때는 모드 A 가 더 가볍다.
+The LLM summarizes the session → preview → after confirmation calls `tako new`. With no session context, mode A is lighter.
 
-본문 후보는 *최상단에 두 섹션* 을 반드시 포함하도록 설계됨 — `[내가 한 일]` 과 `[현재 상태/결론]`. 그 아래에 배경/영향 같은 옵션 섹션은 필요 시 추가. 자가 점검 단계에서 두 섹션 누락이면 미리보기에 경고 (자동 수정 안 함, 사용자 결정).
+The body candidate is designed to *always include two sections at the very top* — `[내가 한 일]` (what I did) and `[현재 상태/결론]` (current state/conclusion). Optional sections like background/impact go below as needed. If the self-check step finds either section missing, the preview warns (it doesn't auto-fix — the user decides).
 
-> 하위 작업 생성에는 사용자 환경 `~/.config/tako/config.yaml` 의 `issue_types` 에 *그 사이트의 sub-task 타입 이름이 등록* 되어 있어야 함 (예: `하위작업`, `Sub-task`, `서브태스크`). 없으면 `tako new` 가 "허용 안 된 이슈 타입" 으로 거부한다.
+> Creating a sub-task requires *the site's sub-task type name to be registered* under `issue_types` in your `~/.config/tako/config.yaml` (e.g. `하위작업`, `Sub-task`, `서브태스크`). Without it, `tako new` rejects it as a "disallowed issue type".
 
-### C) 기존 티켓 ↔ 세션 작업 검토 (`/tako-check`)
+### C) Review an existing ticket against session work (`/tako-check`)
 
 ```
 /tako-check WL-8876
 ```
 
-세션에서 한 작업이 그 티켓의 명세를 얼마나 충족하는지 LLM 이 대조해서 보고. 셸에서 직접 조회만 하려면:
+The LLM cross-checks how well the work done in the session satisfies that ticket's spec and reports. To just fetch from the shell:
 
 ```bash
-tako show WL-8876                  # 사람 친화 텍스트
-tako show WL-8876 --json           # 원본 JSON (자동화·LLM 용)
-tako show https://<site>/browse/WL-8876   # URL 도 OK
-tako show WL-8876 --max-comments 0 # 코멘트 제외
+tako show WL-8876                  # human-friendly text
+tako show WL-8876 --json           # raw JSON (for automation / LLMs)
+tako show https://<site>/browse/WL-8876   # a URL is fine too
+tako show WL-8876 --max-comments 0 # exclude comments
 ```
 
-`tako show` 가 ADF→마크다운 변환·인증·REST 호출을 모두 처리한다.
+`tako show` handles ADF→markdown conversion, authentication, and the REST call.
 
-> 민감 정보 주의: 티켓 본문이 세션에 노출되므로 토큰·비밀번호 포함 티켓에는 신중히 사용 (v1.x 자동 필터 없음).
+> Sensitive-data caution: the ticket body is exposed to the session, so use carefully with tickets containing tokens/passwords (no auto-filtering in v1.x).
 
-### D) 기존 티켓 제목/본문 업데이트 (`/tako-update`)
+### D) Update an existing ticket's title/body (`/tako-update`)
 
 ```
 /tako-update WL-8876
 ```
 
-세션에서 한 작업을 *티켓 본문에 append* (기본). LLM 이 세션 맥락 → 추가될 섹션 자동 작성 → 미리보기 → Y/n → REST. 셸에서 직접:
+*Appends* the session's work to the ticket body (default). The LLM turns session context → an auto-written section → preview → Y/n → REST. Directly from the shell:
 
 ```bash
-# 기본 append — 본문 끝에 '## 업데이트 (YYYY-MM-DD)' 섹션 추가
+# default append — adds a '## Update (YYYY-MM-DD)' section at the end of the body
 tako update WL-8876 --body "$(cat <<'BODY'
-- 작업 내용 1
-- 작업 내용 2
+- work item 1
+- work item 2
 BODY
 )" --yes
 
-# 섹션 이름 지정
-tako update WL-8876 --section "진행 상황" --body "..."
+# name the section
+tako update WL-8876 --section "Progress" --body "..."
 
-# 본문 통째 교체 (위험 — 미리보기에서 신중히)
+# replace the whole body (dangerous — review carefully in the preview)
 tako update WL-8876 --mode overwrite --body "..."
 
-# 제목만 변경 (본문 안 건드림)
-tako update WL-8876 --summary "새 제목으로 교체"
+# change only the title (body untouched)
+tako update WL-8876 --summary "replace with a new title"
 
-# 제목 + 본문 동시 변경
-tako update WL-8876 --summary "새 제목" --body "..." --mode overwrite
+# change title + body together
+tako update WL-8876 --summary "new title" --body "..." --mode overwrite
 ```
 
-`--summary` 와 `--body` 중 *최소 하나는* 있어야 함. `--mode` 는 *본문에만* 영향 — 제목은 항상 교체.
+At least *one* of `--summary` and `--body` is required. `--mode` affects *only the body* — the title is always replaced.
 
-> 본문·제목 모두 *영구 기록*되므로 민감 정보·실수 주의. 미리보기 단계에서 반드시 검토.
+> Both body and title are *permanent records*, so beware of sensitive data and mistakes. Always review at the preview step.
 
-### E) 티켓 조회·필터링 (`tako list` / `/tako-list`)
+### E) List/filter tickets (`tako list` / `/tako-list`)
 
 ```bash
-# 내 티켓 (config.default_project + 자기 자신 자동)
+# my tickets (config.default_project + yourself, automatically)
 tako list --assignee me
 
-# 흔한 조합
+# common combos
 tako list --assignee me --status 진행중 --updated 7d
 tako list --type 에픽 --limit 50
-tako list --parent WL-9200          # 자식 이슈들
+tako list --parent WL-9200          # child issues
 tako list --label backend --query 정렬
-tako list --project WL --project ABC --assignee me   # 여러 프로젝트 동시
+tako list --project WL --project ABC --assignee me   # multiple projects at once
 
-# 고급 — JQL 직접 (다른 인자 무시)
+# advanced — raw JQL (ignores other args)
 tako list --jql "project = WL AND assignee = currentUser() AND duedate < now()"
 
-# 자동화·LLM 용 JSON
+# JSON for automation / LLMs
 tako list --assignee me --json
 
-# Excel 로 (UTF-8 BOM 포함 CSV — 더블클릭으로 Excel 자동 열림)
+# to Excel (UTF-8 BOM CSV — opens in Excel on double-click)
 tako list --assignee me --csv --output my-issues.csv
-tako list --assignee me --csv > my-issues.csv   # stdout 리다이렉트도 가능
+tako list --assignee me --csv > my-issues.csv   # stdout redirect also works
 ```
 
-지원 인자: `--assignee` (me / 이메일 / accountId), `--project` (반복, 여러 프로젝트 동시 조회), `--status` (반복), `--type` (반복), `--parent`, `--label` (반복), `--updated` / `--created` (`7d`/`1w`/`YYYY-MM-DD` / `<=YYYY-MM-DD` 등 비교 / `YYYY-MM-DD..YYYY-MM-DD` 범위), `--due` (`overdue` / `none` / `set` / `YYYY-MM-DD` / `<=YYYY-MM-DD` 등 / 범위), `--sp` (정수 / `>=N` / `<=N` / `none` / `set`), `--query`, `--jql`, `--limit` (기본 20), `--all` (페이지네이션 자동), `--json`, `--csv`, `--output / -o`, `--wizard / -i` (인터랙티브 입력).
+Supported args: `--assignee` (me / email / accountId), `--project` (repeatable, query multiple projects at once), `--status` (repeatable), `--type` (repeatable), `--parent`, `--label` (repeatable), `--updated` / `--created` (`7d`/`1w`/`YYYY-MM-DD` / comparisons like `<=YYYY-MM-DD` / `YYYY-MM-DD..YYYY-MM-DD` range), `--due` (`overdue` / `none` / `set` / `YYYY-MM-DD` / `<=YYYY-MM-DD` etc. / range), `--sp` (integer / `>=N` / `<=N` / `none` / `set`), `--query`, `--jql`, `--limit` (default 20), `--all` (auto-paginate), `--json`, `--csv`, `--output / -o`, `--wizard / -i` (interactive input).
 
-`--updated` / `--created` / `--due` 의 *범위* 표현은 `YYYY-MM-DD..YYYY-MM-DD` 또는 `YYYY-MM-DD~YYYY-MM-DD` (alias), 양 끝 포함. 단축형(`7d`) 과 섞을 수는 없다. 시작이 끝보다 늦으면 거부.
+The *range* form for `--updated` / `--created` / `--due` is `YYYY-MM-DD..YYYY-MM-DD` or `YYYY-MM-DD~YYYY-MM-DD` (alias), both endpoints inclusive. It can't be mixed with shorthand (`7d`). If the start is later than the end, it's rejected.
 
 ```bash
-tako list --updated 2026-05-01..2026-05-15     # 5/1 ~ 5/15 업데이트된 것
-tako list --created 2026-03-01~2026-03-31      # 3월 한 달 동안 만들어진 것
-tako list --due 2026-06-01..2026-06-30         # 6월 기한
+tako list --updated 2026-05-01..2026-05-15     # updated between 5/1 and 5/15
+tako list --created 2026-03-01~2026-03-31      # created during the month of March
+tako list --due 2026-06-01..2026-06-30         # due in June
 ```
 
-필터가 길어 한 줄이 부담스러우면 `tako list --wizard` (또는 `-i`) — 항목별로 묻고 빈 입력은 스킵. CLI 인자와 병용 가능 (예: `tako list -i --assignee me` 하면 담당자는 묻지 않고 나머지만). 결과 출력 직후 같은 조회를 만드는 *셸 명령 한 줄* 을 stderr 에 힌트로 찍어줘서 마음에 들면 alias 로 저장 가능.
+When the filter gets long for one line, use `tako list --wizard` (or `-i`) — it asks per item and skips blank input. It composes with CLI args (e.g. `tako list -i --assignee me` skips the assignee prompt and asks the rest). Right after the output, it prints a *one-line shell command* that reproduces the same query to stderr as a hint, so you can save it as an alias if you like it.
 
-**`전체` / `all` / `*` 키워드** — 모든 필터에 사용 가능 (인터랙티브·CLI 양쪽):
+**`전체` / `all` / `*` keyword** — usable on any filter (both interactive and CLI):
 
-- 상태 / 유형 / 라벨 / 담당자: `전체` = 빈 입력과 동일 (해당 조건 안 걸림).
-- 프로젝트: `전체` = `default_project` 도 무시 + JQL 에 `project` 절 자체 빠짐 → 사이트의 모든 프로젝트.
-- 최대 결과 수 (`--limit` / 인터랙티브 limit 단계): `전체` = `--all` 자동 + 페이지당 100개로 끝까지.
+- Status / type / label / assignee: `전체` (all) = same as blank input (that condition isn't applied).
+- Project: `전체` = ignore `default_project` too + drop the `project` clause from the JQL entirely → all projects on the site.
+- Max results (`--limit` / interactive limit step): `전체` = auto `--all` + 100 per page to the end.
 
 ```bash
-tako list --project 전체 --assignee me --updated 7d   # 사이트 전체 프로젝트 중 내 이번 주 티켓
-tako list -i  # 인터랙티브에서 "프로젝트: 전체", "최대: 전체" 같이 답해도 동일
+tako list --project 전체 --assignee me --updated 7d   # my tickets this week across all site projects
+tako list -i  # answering "Project: 전체", "Max: 전체" in interactive mode does the same
 ```
 
-> 주의: `--project 전체` 만 명시하고 다른 조건이 없으면 *사이트 전체 모든 이슈* 가 되어 거부됨. 다른 조건 한 개 이상 같이 줘야 함.
+> Note: specifying only `--project 전체` with no other condition would mean *every issue on the entire site* and is rejected. Give at least one other condition with it.
 
-`--all` 은 모든 페이지를 자동 반복 호출 (페이지당 100 max). 큰 결과집합에 주의 — 943건이 약 10페이지에 걸쳐 조회됨.
+`--all` auto-repeats every page (100 max per page). Beware large result sets — 943 issues span about 10 pages.
 
-기본 컬럼: `key, status, type, assignee, created, updated, duedate, summary, parent, url`. 사용자 config 에 `jira.fields.story_points` 매핑이 있으면 `story_points` 컬럼이 `type` 직후에 자동 추가됨. 매핑 없으면 SP 필터·컬럼 비활성 + 안내.
+Default columns: `key, status, type, assignee, created, updated, duedate, summary, parent, url`. If your config has a `jira.fields.story_points` mapping, a `story_points` column is auto-added right after `type`. Without the mapping, SP filter/column are disabled with a notice.
 
 ```bash
-# 기한 / SP 필터 예시
-tako list --due overdue                       # 기한 지난 것
-tako list --due "<=2026-06-15"                # 6월 15일까지
-tako list --sp ">=3" --assignee me            # 내 SP 3 이상
-tako list --sp none --status 진행중           # SP 미정 진행중
+# due / SP filter examples
+tako list --due overdue                       # overdue
+tako list --due "<=2026-06-15"                # through June 15
+tako list --sp ">=3" --assignee me            # my issues with SP ≥ 3
+tako list --sp none --status 진행중           # in-progress with no SP set
 
-# 오래된 stale 티켓 찾기
-tako list --assignee me --updated "<=2026-04-01"   # 4월 1일 이후 한 번도 안 건드린 내 티켓
+# find stale tickets
+tako list --assignee me --updated "<=2026-04-01"   # my tickets untouched since April 1
 
-# 전체 조회 + CSV
+# full fetch + CSV
 tako list --created 2026-03-01 --all --csv -o issues-since-march.csv
 ```
 
-Claude Code 슬래시는 *자연어 → 인자 매핑*:
+Claude Code slash commands do *natural language → arg mapping*:
 ```
-/tako-list 이번 주 내가 진행한 거
-/tako-list WL-9200 자식 중 에픽
-/tako-list 최근 한 달 진행중 + 라벨 backend
+/tako-list what I worked on this week
+/tako-list epics among WL-9200's children
+/tako-list in-progress in the last month + label backend
 ```
 
-> 담당자 *한국어 이름*은 v1.x 미지원. `me` / 이메일 / accountId 만.
+> Assignee by *Korean name* is unsupported in v1.x. Only `me` / email / accountId.
 
-### F) 본문 작성 가이드 커스텀 (`tako guide` / `/tako-guide`)
+### F) Customize the body-writing guide (`tako guide` / `/tako-guide`)
 
-`/tako`·`/tako-update` 가 제목·본문을 *어떤 규칙으로* 쓸지는 **개인 가이드 파일** 하나로 정해진다 — `~/.config/tako/body_guide.md`. 제목 형태, 필수 섹션, 작성 톤(기획자도 이해할 평이한 언어·코드 복붙 금지 등), 자가 점검 항목이 전부 이 파일에 들어 있고, 슬래시 커맨드가 본문을 만들기 전에 읽어 그대로 따른다.
+The *rules* by which `/tako` and `/tako-update` write the title and body are set by a single **personal guide file** — `~/.config/tako/body_guide.md`. Title format, required sections, writing tone (plain language a non-engineer PM can follow, no pasted code, etc.), and self-check items all live in this file, and the slash commands read it before writing the body and follow it exactly.
 
-파일이 없으면 **기본 가이드**(패키지 동봉)가 적용된다. 본인 팀 스타일로 바꾸고 싶을 때만 개인 파일을 만들면 된다.
+If the file doesn't exist, a **default guide** (bundled with the package) applies. Create a personal file only when you want your own team's style.
 
 ```bash
-tako guide show      # 지금 적용 중인 가이드 출력 (개인 파일 없으면 기본값)
-tako guide path      # 개인 가이드 경로 출력
-tako guide init      # 기본 가이드를 개인 파일로 생성 → 에디터로 편집
-tako guide reset     # 개인 가이드를 기본값으로 되돌림
+tako guide show      # print the currently applied guide (default if no personal file)
+tako guide path      # print the personal guide path
+tako guide init      # create the personal file from the default → edit in your editor
+tako guide reset     # revert the personal guide to the default
 ```
 
-Claude Code 안에서는 대화로 고친다 (미리보기 → 확인 후 저장):
+Inside Claude Code, edit it conversationally (preview → save after confirmation):
 
 ```
-/tako-guide                          # 현재 가이드 보기
-/tako-guide 코드 예시는 허용해줘       # 규칙 일부만 수정
-/tako-guide 본문 더 짧게 쓰도록        # 톤 조정
-/tako-guide 기본값으로 되돌려          # 리셋
+/tako-guide                          # view the current guide
+/tako-guide allow code examples       # tweak part of the rules
+/tako-guide write shorter bodies      # adjust tone
+/tako-guide revert to default         # reset
 ```
 
-> 가이드는 *전부 커스텀* 가능하다 — 필수 섹션·미검증 표현 금지 같은 품질 가드까지 본인이 바꿀 수 있다. 품질 가드를 빼면 인계·추적이 어려워질 수 있어, `/tako-guide` 는 그런 변경 시 한 번 환기한다.
-> 다른 경로를 쓰려면 `TAKO_GUIDE_PATH` 환경변수로 지정.
+> The guide is *fully customizable* — even quality guards like required sections and "no unverified claims" are yours to change. Removing quality guards can make handover/traceability harder, so `/tako-guide` flags such a change once.
+> To use a different path, set the `TAKO_GUIDE_PATH` environment variable.
 
-## 부분 호출 (디버깅·자동화)
+## Partial invocation (debugging / automation)
 
 ```bash
-# 미리보기만
+# preview only
 echo '{"summary":"x","description":"y"}' | tako preview
 
-# 페이로드 JSON 만
+# payload JSON only
 echo '{"summary":"x","description":"y"}' | tako build
 
-# TTY 인터랙티브 → 페이로드 JSON
+# TTY interactive → payload JSON
 tako interactive
 ```
 
-`new` / `fields detect` 만 실제 REST 호출. 나머지는 로컬 처리.
+Only `new` / `fields detect` make actual REST calls. The rest is local processing.
 
-## 설계 — 왜 Jira MCP 가 아니라 CLI + 얇은 스킬인가
+## Design — why a CLI + thin skill instead of the Jira MCP
 
-(상단 인용구의 상세판. oobs · nacho 와 공통 설계 원칙이며, tako 는 실제로 v1 초기에
-MCP 백엔드 결정을 폐기하고 REST 직결로 전환했다 — CLAUDE.md 변경 이력 참조)
+(The detailed version of the quote at the top. A shared design principle with oobs · nacho — and tako actually scrapped an MCP-backend decision early in v1 and switched to a direct REST connection; see the CLAUDE.md change history.)
 
-MCP 의 컨텍스트 비용은 호출이 아니라 **상주**에서 나간다. Atlassian 공식 MCP 를 붙이면
-도구 수십 개의 스키마가 모든 세션의 시스템 프롬프트에 실려, *Jira 를 안 쓰는 세션에서도*
-수천~만 토큰을 차지할 수 있다. tako 는 그 상주 비용을 호출 시점 비용으로 바꾼 구조다:
+MCP's context cost comes not from calls but from **residency**. Attach Atlassian's official MCP and dozens of tool schemas ride in the system prompt of *every* session — taking thousands to tens of thousands of tokens *even in sessions that never touch Jira*. tako converts that residency cost into a per-call cost:
 
-- **상주 비용**: 슬래시 커맨드 설명 한 줄(수십 토큰)뿐. 사용법은 `/tako` 호출 순간에만 로드
-- 호출당 비용은 MCP 와 비슷 — 절약분은 전적으로 상주 스키마
-- **세션 밖 셸 직접 호출 = 토큰 0** + 인증·페이로드·ADF 변환은 결정론적 코드가 보장
+- **Residency cost**: just one line of slash-command description (tens of tokens). Usage loads only at the moment `/tako` is invoked.
+- Per-call cost is similar to MCP — the savings are entirely in the resident schemas.
+- **Direct shell calls outside a session = 0 tokens** + authentication, payload, and ADF conversion are guaranteed by deterministic code.
 
-정직한 트레이드오프:
+Honest trade-offs:
 
-- 최신 Claude Code 는 MCP 도구를 지연 로딩(ToolSearch)하므로 상주 격차가 예전만큼 크지 않다
-- MCP 가 이기는 지점 — 타입 스키마로 잘못된 호출 감소, 인증을 서버가 관리, 그리고
-  **벤더 유지보수**: Jira REST API 가 바뀌면 tako 는 직접 고쳐야 한다. 필드·이슈 타입을
-  설정에 직접 등록하는 것도 MCP 의 런타임 조회 대비 수동 비용 (상단 인용구와 동일)
+- Recent Claude Code lazy-loads MCP tools (ToolSearch), so the residency gap is smaller than it used to be.
+- Where MCP wins — typed schemas reduce malformed calls, the server manages auth, and **vendor maintenance**: when the Jira REST API changes, tako has to be fixed by hand. Registering fields and issue types directly in config is also a manual cost versus the MCP's runtime lookup (same as the top quote).
 
-## 적용 환경 가정
+## Environment assumptions
 
-- 대상 Jira 프로젝트는 team-managed. 모든 부모-자식 관계가 `parent` 필드 하나로 표현됨 — 일반 이슈가 Epic 아래 (`parent` = Epic 키), *하위 작업(sub-task)* 이 일반 이슈 아래 (`parent` = 일반 이슈 키) 모두 동일 형태. classic 프로젝트는 v1 미검증.
-- description 은 마크다운으로 받아 [`md-to-adf`](https://pypi.org/project/md-to-adf/) 로 ADF 변환 후 전송.
-- v1 은 1인 사용 가정. 팀 공용 설정 오버라이드 / 멀티 사이트 / 사용자별 필드 커스터마이징은 v1.1+ 확장 포인트.
+- The target Jira project is team-managed. All parent-child relations are expressed by the single `parent` field — a regular issue under an Epic (`parent` = Epic key) and a *sub-task* under a regular issue (`parent` = regular issue key) take the same form. Classic projects are unverified in v1.
+- The description is taken as markdown and converted to ADF via [`md-to-adf`](https://pypi.org/project/md-to-adf/) before sending.
+- v1 assumes single-user use. Shared team config overrides / multi-site / per-user field customization are v1.1+ extension points.
 
-## 디렉토리
+## Directory
 
 ```
 tako/
 ├── commands/
-│   ├── tako.md             /tako 슬래시 커맨드 (생성)
-│   ├── tako-update.md      /tako-update 슬래시 커맨드 (제목/본문 수정)
-│   ├── tako-check.md       /tako-check 슬래시 커맨드 (검토)
-│   ├── tako-list.md        /tako-list 슬래시 커맨드 (조회)
-│   └── tako-guide.md       /tako-guide 슬래시 커맨드 (본문 가이드 커스텀)
-├── tako/                   Python 패키지
-│   ├── auth.py              credentials 로드
-│   ├── jira_client.py       REST + ADF 변환 진입점
-│   ├── adf_to_md.py         ADF → 마크다운
-│   ├── issue_draft.py       페이로드 빌더 + 미리보기
-│   ├── fields.py            custom field 매핑 헬퍼
-│   ├── prompts.py           인터랙티브 입력
-│   ├── config.py            설정 + init 마법사
-│   ├── guide.py             본문 작성 가이드 로드/생성
-│   ├── templates/           기본 가이드 등 동봉 리소스
-│   └── main.py              진입점
-├── config.example.yaml     설정 예시
-└── install.sh              슬래시 커맨드 등록 (선택)
+│   ├── tako.md             /tako slash command (create)
+│   ├── tako-update.md      /tako-update slash command (edit title/body)
+│   ├── tako-check.md       /tako-check slash command (review)
+│   ├── tako-list.md        /tako-list slash command (list)
+│   └── tako-guide.md       /tako-guide slash command (customize body guide)
+├── tako/                   Python package
+│   ├── auth.py              credentials loader
+│   ├── jira_client.py       REST + ADF conversion entry point
+│   ├── adf_to_md.py         ADF → markdown
+│   ├── issue_draft.py       payload builder + preview
+│   ├── fields.py            custom field mapping helper
+│   ├── prompts.py           interactive input
+│   ├── config.py            settings + init wizard
+│   ├── guide.py             body-guide load/create
+│   ├── templates/           bundled resources (default guide, etc.)
+│   └── main.py              entry point
+├── config.example.yaml     example config
+└── install.sh              register slash commands (optional)
 ```
 
-## 문제 해결
+## Troubleshooting
 
-- `tako: command not found` — PATH 에 없음. `pip install -e .` 안 끝났거나 다른 venv. 폴백으로 `python -m tako ...` 도 동일 동작.
-- `설정 파일이 없습니다` — `tako init`. 다른 경로면 `TAKO_CONFIG_PATH` 환경변수.
-- `creds 없음` — 위와 동일.
-- `허용 안 된 이슈 타입` — `~/.config/tako/config.yaml` 의 `issue_types` 에 추가.
-- `401 인증 실패` — 토큰 만료. `tako init --force` 로 재입력.
-- `403 권한 없음` — 해당 프로젝트에 이슈 생성 권한 있는지 확인.
-- `400/422 입력 거부` — 응답 body 확인. 흔한 원인: 이슈 타입 이름이 그 프로젝트에 정의되지 않음.
-- `story_points 값을 받았지만 ... 페이로드에서 제외함` — `tako fields detect story_points --save` 한 줄로 자동 등록 가능.
+- `tako: command not found` — not on PATH. `pip install -e .` didn't finish, or a different venv. As a fallback, `python -m tako ...` behaves identically.
+- `설정 파일이 없습니다` (no config file) — `tako init`. For a different path, use the `TAKO_CONFIG_PATH` environment variable.
+- `creds 없음` (no creds) — same as above.
+- `허용 안 된 이슈 타입` (disallowed issue type) — add it under `issue_types` in `~/.config/tako/config.yaml`.
+- `401 인증 실패` (401 auth failed) — token expired. Re-enter with `tako init --force`.
+- `403 권한 없음` (403 no permission) — check you have issue-create permission on that project.
+- `400/422 입력 거부` (400/422 input rejected) — check the response body. Common cause: the issue-type name isn't defined in that project.
+- `story_points 값을 받았지만 ... 페이로드에서 제외함` (got a story_points value but excluded it from the payload) — auto-register in one line with `tako fields detect story_points --save`.
+```
