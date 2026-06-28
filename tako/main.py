@@ -147,6 +147,20 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     update_parser.add_argument("--yes", "-y", action="store_true", help="확인 없이 바로 적용")
 
+    retype_parser = sub.add_parser("retype", help="기존 이슈의 유형(issue type) 변경")
+    retype_parser.add_argument("key", help="이슈 키 또는 browse URL")
+    retype_parser.add_argument(
+        "to",
+        nargs="?",
+        help="새 유형 이름 (예: Story / 기능변경). --to 로도 줄 수 있음",
+    )
+    retype_parser.add_argument(
+        "--to",
+        dest="to_opt",
+        help="새 유형 이름. 위치 인자 대신 쓸 때.",
+    )
+    retype_parser.add_argument("--yes", "-y", action="store_true", help="확인 없이 바로 적용")
+
     fields_parser = sub.add_parser("fields", help="custom field 매핑 관리")
     fields_sub = fields_parser.add_subparsers(dest="fields_command", required=True)
 
@@ -663,6 +677,122 @@ def _cmd_update(args: argparse.Namespace, cfg: TakoConfig) -> int:
         return 2
 
     sys.stderr.write(f"\n업데이트 완료: {key}\n  링크: https://{cfg.jira.site}/browse/{key}\n")
+    print(key)
+    return 0
+
+
+def _match_issue_type(target: str, allowed: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """사용자가 준 유형 이름(또는 id)을 editmeta allowedValues 에서 찾아 항목 반환.
+
+    이름 대소문자 무시 매칭 우선, 그래도 없으면 id 정확 일치. 못 찾으면 None.
+    매칭 성공 자체가 "그 이슈에 허용되는 변환" 을 보증한다 (allowedValues 가
+    같은 계층 타입만 담으므로 하위작업↔표준 경계 변환은 여기서 자연히 걸러짐).
+    """
+    t = target.strip()
+    for item in allowed:
+        if (item.get("name") or "").strip().lower() == t.lower():
+            return item
+    for item in allowed:
+        if str(item.get("id") or "") == t:
+            return item
+    return None
+
+
+def _cmd_retype(args: argparse.Namespace, cfg: TakoConfig) -> int:
+    key = _extract_key(args.key)
+    target = (args.to or args.to_opt or "").strip()
+    if not target:
+        sys.stderr.write("[retype] 새 유형을 지정하세요. 예: tako retype WL-1234 Story\n")
+        return 2
+
+    creds = _load_credentials_or_guide(args.credentials)
+    client = JiraSiteClient(site=cfg.jira.site, creds=creds)
+
+    # 현재 상태 조회 (미리보기·사후 비교용) + 편집 가능 유형 목록.
+    try:
+        issue = client.get_issue(key)
+        meta = client.get_editmeta(key)
+    except JiraApiError as exc:
+        sys.stderr.write(f"[jira] {exc}\n")
+        return 2
+
+    current_fields = issue.get("fields") or {}
+    current_summary = current_fields.get("summary", "")
+    current_type = ((current_fields.get("issuetype") or {}).get("name")) or "?"
+
+    issuetype_meta = (meta.get("fields") or {}).get("issuetype")
+    if not issuetype_meta:
+        # editmeta 에 issuetype 자체가 없음 = 이 이슈는 편집 화면에서 유형 변경 불가.
+        sys.stderr.write(
+            f"[retype] 이 이슈는 유형을 변경할 수 없습니다 ({key}, 현재 '{current_type}').\n"
+            "  편집 화면에 유형 필드가 없습니다. 계층을 바꾸는 변환(하위작업↔표준)이거나\n"
+            "  사이트 설정상 막혀 있을 수 있어요. 그 경우 Jira UI 의 '이동(Move)' 으로 처리하세요.\n"
+        )
+        return 2
+
+    allowed = issuetype_meta.get("allowedValues") or []
+    chosen = _match_issue_type(target, allowed)
+    if chosen is None:
+        names = [str(v.get("name") or "?") for v in allowed]
+        sys.stderr.write(
+            f"[retype] '{target}' 으로는 바꿀 수 없습니다 ({key}, 현재 '{current_type}').\n"
+            f"  바꿀 수 있는 유형: {', '.join(names) if names else '(없음)'}\n"
+            "  하위작업↔표준 같은 계층 경계 변환은 목록에 없으며 UI 의 '이동(Move)' 이 필요합니다.\n"
+        )
+        return 2
+
+    chosen_name = str(chosen.get("name") or target)
+    chosen_id = str(chosen.get("id") or "")
+    if not chosen_id:
+        sys.stderr.write(f"[retype] 유형 '{chosen_name}' 의 id 를 찾지 못했습니다.\n")
+        return 2
+
+    if chosen_name.strip().lower() == current_type.strip().lower():
+        sys.stderr.write(f"[retype] 이미 '{current_type}' 유형입니다. 변경할 게 없습니다: {key}\n")
+        return 0
+
+    # 미리보기
+    sys.stderr.write(f"\n[{key}] {current_summary}\n")
+    sys.stderr.write(f"링크: https://{cfg.jira.site}/browse/{key}\n")
+    sys.stderr.write("\n--- 유형 변경 ---\n")
+    sys.stderr.write(f"  현재: {current_type}\n")
+    sys.stderr.write(f"  변경: {chosen_name}\n")
+    sys.stderr.write(
+        "  (되돌리려면 다시 retype 해야 합니다. 새 유형의 워크플로·필수 필드 차이로\n"
+        "   거부될 수 있으며, 그 경우 아래 Jira 메시지를 그대로 보여드립니다.)\n\n"
+    )
+
+    if not args.yes:
+        if not confirm(f"{key} 유형을 '{current_type}' → '{chosen_name}' 으로 바꿀까요?"):
+            sys.stderr.write("취소.\n")
+            return 1
+
+    try:
+        client.update_issue_fields(key, {"issuetype": {"id": chosen_id}})
+    except JiraApiError as exc:
+        sys.stderr.write(f"[jira] {exc}\n")
+        return 2
+
+    # 사후 확인 — 워크플로/스크린 차이로 200 이 떠도 결과가 어긋날 수 있어 재조회.
+    try:
+        after = client.get_issue(key)
+        after_type = ((after.get("fields") or {}).get("issuetype") or {}).get("name") or "?"
+    except JiraApiError:
+        after_type = chosen_name  # 재조회 실패 시 요청값으로 보고
+
+    if after_type.strip().lower() != chosen_name.strip().lower():
+        sys.stderr.write(
+            f"\n[경고] 적용 후 유형이 '{after_type}' 입니다 (요청: '{chosen_name}').\n"
+            "  사이트 워크플로/화면 설정이 변경을 일부만 반영했을 수 있어요. Jira 에서 확인하세요.\n"
+        )
+        sys.stderr.write(f"링크: https://{cfg.jira.site}/browse/{key}\n")
+        print(key)
+        return 2
+
+    sys.stderr.write(
+        f"\n유형 변경 완료: {key}\n  {current_type} → {after_type}\n"
+        f"  링크: https://{cfg.jira.site}/browse/{key}\n"
+    )
     print(key)
     return 0
 
@@ -1223,6 +1353,8 @@ def run(argv: list[str] | None = None) -> int:
             return _cmd_list(args, cfg)
         case "update":
             return _cmd_update(args, cfg)
+        case "retype":
+            return _cmd_retype(args, cfg)
         case "preview":
             return _cmd_preview(cfg)
         case "build":
