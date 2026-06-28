@@ -88,6 +88,22 @@ class JiraSiteClient:
             raise JiraApiError(f"이슈를 찾을 수 없음: {key}")
         raise JiraApiError(_format_error(resp))
 
+    def get_editmeta(self, key: str) -> dict[str, Any]:
+        """GET /rest/api/3/issue/<key>/editmeta — 이 이슈에서 *지금 편집 가능한* 필드 메타.
+
+        유형 변경에 쓰는 핵심 소스. 응답 fields.issuetype.allowedValues 가
+        "이 이슈를 어떤 유형으로 바꿀 수 있는가" 의 정답 목록(각 항목에 id/name).
+        fields 에 issuetype 키가 아예 없으면 = 이 이슈는 유형 변경 불가(편집 화면에 없음).
+        같은 계층(표준↔표준, 하위작업↔하위작업) 타입만 나열되므로 계층 경계 변환은
+        목록에 안 나타나 자연히 걸러진다.
+        """
+        resp = self._request("GET", f"issue/{key}/editmeta")
+        if resp.status_code == 200:
+            return resp.json()
+        if resp.status_code == 404:
+            raise JiraApiError(f"이슈를 찾을 수 없음: {key}")
+        raise JiraApiError(_format_error(resp))
+
     def list_comments(self, key: str, *, max_results: int = 5) -> list[dict[str, Any]]:
         """최근 코멘트 N개. 응답에서 최신순으로 정렬해 반환."""
         resp = self._request(
