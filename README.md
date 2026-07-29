@@ -4,6 +4,36 @@ Create a Jira ticket with one shell line. Used on top of Claude Code slash comma
 
 > Difference from a Jira MCP (e.g. Atlassian's official Remote MCP): tako lets the LLM draft *only the body*, while authentication, payload, ADF conversion, and the REST call are handled by deterministic code — so it connects straight to Jira with no intermediate server, keeping dependencies and tokens light. The trade-off: fields and issue types must be registered in config directly, unlike the MCP's runtime lookup.
 
+## Architecture
+
+Every path — shell or slash command — funnels into the same dispatcher, and *nothing reaches Jira before a preview is confirmed*.
+
+```mermaid
+flowchart TD
+    SLASH["Claude Code slash commands<br/>/tako · /tako-read · /tako-check · /tako-update · /tako-retype · /tako-list · /tako-guide<br/>(LLM drafts title + body from session context)"]
+    SHELL["shell<br/>tako new · list · show · update · retype · fields · guide · init"]
+    SLASH -->|"builds the shell call"| SHELL
+    SHELL --> MAIN["main.py — argparse dispatcher (run)"]
+
+    MAIN --> CFG["config.py<br/>~/.config/tako/config.yaml<br/>site · default project · issue types · field IDs · epic aliases"]
+    MAIN --> AUTH["auth.py<br/>~/.config/tako/credentials.json (chmod 0600)"]
+    MAIN --> PROMPT["prompts.py — TTY input<br/>(asks only for what the args left blank)"]
+
+    PROMPT --> BUILD
+    MAIN --> BUILD["issue_draft.py — IssueDraft → build_payload / render_preview<br/>list_query.py — filters → JQL · guide.py · fields.py"]
+    BUILD --> PREVIEW{"preview → confirm (Y/n)<br/>--yes skips"}
+    PREVIEW -->|"n"| CANCEL["cancel — exit 1, no REST call"]
+    PREVIEW -->|"Y"| CLIENT
+
+    CFG --> CLIENT["jira_client.py<br/>one requests.Session (reused)<br/>1 retry on connection/timeout only<br/>_format_error → 401 / 403 / 400·422 / 429 / 5xx"]
+    AUTH --> CLIENT
+    CLIENT <--> ADF["markdown ↔ ADF<br/>md-to-adf · adf_to_md.py"]
+    CLIENT --> REST["Jira Cloud REST v3<br/>POST /issue · POST /search/jql · GET·PUT /issue/&lt;key&gt;<br/>/issue/&lt;key&gt;/editmeta · /myself · /user/search<br/>/mypermissions · /field · /issueLink"]
+    REST --> OUT["issue key + URL (clipboard.py auto-copy)<br/>· text table · JSON · CSV"]
+```
+
+Meaningful failures (400/422/403) are reported as-is; only a dropped connection is retried (once). Links are a *separate* request after creation — if a link fails the ticket still stands, and only the failure is reported.
+
 ## Prerequisites
 
 - macOS / Linux
@@ -76,9 +106,16 @@ sort is applied" \
   --yes
 ```
 
-`--assignee` / `--story-points` / `--duedate` / `--link` are optional. In interactive mode, leaving the input blank also skips them.
+`--assignee` / `--reporter` / `--story-points` / `--duedate` / `--link` are optional. In interactive mode, leaving the input blank also skips them — except `--reporter`, which interactive mode never asks about (see below).
 
 `--assignee` accepts `me` (yourself, one `/myself` call), an email (one `/user/search` call, only an exact single match is allowed), or an accountId directly. Korean names/nicknames are unsupported in v1.x. Email search may be blocked depending on the site's GDPR settings — work around it by entering the accountId directly. Setting `jira.default_assignee` in config to 'me'/email/accountId applies it as the default in interactive blank-input / auto mode where `--assignee` is omitted.
+
+`--reporter` sets who the ticket is filed *on behalf of*. It takes the same values as `--assignee` (`me` / email / accountId) and resolves them the same way. Two things make it different:
+
+- **It is off by default and never prompted for.** Omit it and Jira files the ticket under the authenticated user, which is what you want almost every time. Interactive mode doesn't ask, and there is no `default_reporter` config key.
+- **Most accounts can't use it.** Jira grants `Modify Reporter` (called *Edit reporters* in team-managed projects) to project administrators only by default — in team-managed projects the built-in Member and Viewer roles cannot be given it at all without creating a custom role. Since a rejected reporter fails the *whole* create call, `tako new` checks `/mypermissions` first and stops before the REST call rather than losing the ticket. If the permission check itself can't be answered, it proceeds anyway and lets Jira decide.
+
+Even with the permission, the Reporter field must be present on the project's Edit/View screens — otherwise Jira rejects it with the same "cannot be set" error, and `tako new` points at that second cause.
 
 `--link KEY[:TYPE]` is repeatable. When TYPE is omitted, `Relates` is applied. Common TYPEs: `Blocks` / `Relates` / `Duplicates` / `Causes` / `Clones` (varies per site). Check your site's link types:
 
@@ -115,7 +152,24 @@ The body candidate is designed to *always include two sections at the very top* 
 
 > Creating a sub-task requires *the site's sub-task type name to be registered* under `issue_types` in your `~/.config/tako/config.yaml` (e.g. `하위작업`, `Sub-task`, `서브태스크`). Without it, `tako new` rejects it as a "disallowed issue type".
 
-### C) Review an existing ticket against session work (`/tako-check`)
+### C) Understand a ticket before starting work (`/tako-read`)
+
+```
+/tako-read WL-8876
+/tako-read https://<site>/browse/WL-8876
+```
+
+The LLM reads the ticket and translates it into *what needs to be done* — requirements, completion criteria, ambiguities worth asking about, and a suggested breakdown. Unlike `/tako-check`, it needs no session context, so it works from an empty directory.
+
+The two read-side commands split by *when* you call them:
+
+| | `/tako-read` | `/tako-check` |
+|---|---|---|
+| When | **before** the work | **after** the work |
+| Question | what does this ticket ask for? | does my work satisfy it? |
+| Session context | not needed | required |
+
+### D) Review an existing ticket against session work (`/tako-check`)
 
 ```
 /tako-check WL-8876
@@ -130,11 +184,11 @@ tako show https://<site>/browse/WL-8876   # a URL is fine too
 tako show WL-8876 --max-comments 0 # exclude comments
 ```
 
-`tako show` handles ADF→markdown conversion, authentication, and the REST call.
+`tako show` handles authentication and the REST call either way. The **text** output also converts the body and comments from ADF→markdown and lists the parent, sub-tasks, linked issues, and recent comments; `--json` is Jira's raw response, so `fields.description` stays an ADF tree there.
 
 > Sensitive-data caution: the ticket body is exposed to the session, so use carefully with tickets containing tokens/passwords (no auto-filtering in v1.x).
 
-### D) Update an existing ticket's title/body (`/tako-update`)
+### E) Update an existing ticket's title/body (`/tako-update`)
 
 ```
 /tako-update WL-8876
@@ -167,7 +221,7 @@ At least *one* of `--summary` and `--body` is required. `--mode` affects *only t
 
 > Both body and title are *permanent records*, so beware of sensitive data and mistakes. Always review at the preview step.
 
-### E) List/filter tickets (`tako list` / `/tako-list`)
+### F) List/filter tickets (`tako list` / `/tako-list`)
 
 ```bash
 # my tickets (config.default_project + yourself, automatically)
@@ -243,7 +297,7 @@ Claude Code slash commands do *natural language → arg mapping*:
 
 > Assignee by *Korean name* is unsupported in v1.x. Only `me` / email / accountId.
 
-### F) Customize the body-writing guide (`tako guide` / `/tako-guide`)
+### G) Customize the body-writing guide (`tako guide` / `/tako-guide`)
 
 The *rules* by which `/tako` and `/tako-update` write the title and body are set by a single **personal guide file** — `~/.config/tako/body_guide.md`. Title format, required sections, writing tone (plain language a non-engineer PM can follow, no pasted code, etc.), and self-check items all live in this file, and the slash commands read it before writing the body and follow it exactly.
 
@@ -310,8 +364,10 @@ Honest trade-offs:
 tako/
 ├── commands/
 │   ├── tako.md             /tako slash command (create)
+│   ├── tako-read.md        /tako-read slash command (interpret a ticket)
 │   ├── tako-update.md      /tako-update slash command (edit title/body)
 │   ├── tako-check.md       /tako-check slash command (review)
+│   ├── tako-retype.md      /tako-retype slash command (change issue type)
 │   ├── tako-list.md        /tako-list slash command (list)
 │   └── tako-guide.md       /tako-guide slash command (customize body guide)
 ├── tako/                   Python package
@@ -326,8 +382,20 @@ tako/
 │   ├── templates/           bundled resources (default guide, etc.)
 │   └── main.py              entry point
 ├── config.example.yaml     example config
+├── tests/                  stdlib unittest suite (no network)
 └── install.sh              register slash commands (optional)
 ```
+
+## Tests
+
+Standard-library `unittest` only — no pytest, no network, no real Jira site. Responses are stubbed and config files are written to a temp dir.
+
+```bash
+python -m unittest discover -s tests -v    # all
+python -m unittest tests.test_list_query   # a single module
+```
+
+Covers the pure logic: JQL building (`test_list_query.py` — shorthand/comparison/range dates, due, story points, escaping), config validation messages (`test_config.py`), REST error mapping and the ADF conversion boundary (`test_jira_client.py`), issue-type matching for `retype` (`test_retype.py`), the body guide (`test_guide.py`), the sub-task/link lines of `show` (`test_show_render.py`), and the reporter path — payload, preview, and the permission pre-check (`test_reporter.py`).
 
 ## Troubleshooting
 
