@@ -115,7 +115,24 @@ The body candidate is designed to *always include two sections at the very top* 
 
 > Creating a sub-task requires *the site's sub-task type name to be registered* under `issue_types` in your `~/.config/tako/config.yaml` (e.g. `하위작업`, `Sub-task`, `서브태스크`). Without it, `tako new` rejects it as a "disallowed issue type".
 
-### C) Review an existing ticket against session work (`/tako-check`)
+### C) Understand a ticket before starting work (`/tako-read`)
+
+```
+/tako-read WL-8876
+/tako-read https://<site>/browse/WL-8876
+```
+
+The LLM reads the ticket and translates it into *what needs to be done* — requirements, completion criteria, ambiguities worth asking about, and a suggested breakdown. Unlike `/tako-check`, it needs no session context, so it works from an empty directory.
+
+The two read-side commands split by *when* you call them:
+
+| | `/tako-read` | `/tako-check` |
+|---|---|---|
+| When | **before** the work | **after** the work |
+| Question | what does this ticket ask for? | does my work satisfy it? |
+| Session context | not needed | required |
+
+### D) Review an existing ticket against session work (`/tako-check`)
 
 ```
 /tako-check WL-8876
@@ -130,11 +147,11 @@ tako show https://<site>/browse/WL-8876   # a URL is fine too
 tako show WL-8876 --max-comments 0 # exclude comments
 ```
 
-`tako show` handles ADF→markdown conversion, authentication, and the REST call.
+`tako show` handles authentication and the REST call either way. The **text** output also converts the body and comments from ADF→markdown and lists the parent, sub-tasks, linked issues, and recent comments; `--json` is Jira's raw response, so `fields.description` stays an ADF tree there.
 
 > Sensitive-data caution: the ticket body is exposed to the session, so use carefully with tickets containing tokens/passwords (no auto-filtering in v1.x).
 
-### D) Update an existing ticket's title/body (`/tako-update`)
+### E) Update an existing ticket's title/body (`/tako-update`)
 
 ```
 /tako-update WL-8876
@@ -167,7 +184,7 @@ At least *one* of `--summary` and `--body` is required. `--mode` affects *only t
 
 > Both body and title are *permanent records*, so beware of sensitive data and mistakes. Always review at the preview step.
 
-### E) List/filter tickets (`tako list` / `/tako-list`)
+### F) List/filter tickets (`tako list` / `/tako-list`)
 
 ```bash
 # my tickets (config.default_project + yourself, automatically)
@@ -243,7 +260,7 @@ Claude Code slash commands do *natural language → arg mapping*:
 
 > Assignee by *Korean name* is unsupported in v1.x. Only `me` / email / accountId.
 
-### F) Customize the body-writing guide (`tako guide` / `/tako-guide`)
+### G) Customize the body-writing guide (`tako guide` / `/tako-guide`)
 
 The *rules* by which `/tako` and `/tako-update` write the title and body are set by a single **personal guide file** — `~/.config/tako/body_guide.md`. Title format, required sections, writing tone (plain language a non-engineer PM can follow, no pasted code, etc.), and self-check items all live in this file, and the slash commands read it before writing the body and follow it exactly.
 
@@ -310,8 +327,10 @@ Honest trade-offs:
 tako/
 ├── commands/
 │   ├── tako.md             /tako slash command (create)
+│   ├── tako-read.md        /tako-read slash command (interpret a ticket)
 │   ├── tako-update.md      /tako-update slash command (edit title/body)
 │   ├── tako-check.md       /tako-check slash command (review)
+│   ├── tako-retype.md      /tako-retype slash command (change issue type)
 │   ├── tako-list.md        /tako-list slash command (list)
 │   └── tako-guide.md       /tako-guide slash command (customize body guide)
 ├── tako/                   Python package
