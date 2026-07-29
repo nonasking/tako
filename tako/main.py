@@ -65,6 +65,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--assignee",
         help="담당자: 'me' / 이메일 / accountId. 생략 시 인터랙티브 단계에서 묻고, 빈 입력은 미할당 (또는 config.default_assignee).",
     )
+    new_parser.add_argument(
+        "--reporter",
+        help="보고자: 'me' / 이메일 / accountId. 미지정이면 인증 사용자. "
+             "프로젝트에 Modify Reporter 권한이 있어야 함",
+    )
     new_parser.add_argument("--label", action="append", default=[], help="라벨 (반복 가능)")
     new_parser.add_argument("--story-points", dest="story_points", type=int, help="스토리포인트 (정수)")
     new_parser.add_argument("--duedate", help="기한 YYYY-MM-DD")
@@ -316,6 +321,10 @@ def _collect_interactively(
     if assignee_input:
         # 미해결 입력값만 실어둠. _cmd_new 가 REST 로 해석 후 accountId 로 교체.
         payload["assignee_pending"] = assignee_input
+    if pre.get("reporter_pending"):
+        # 보고자는 인터랙티브에서 *묻지 않는다*. 대부분 본인이고, 지정하려면 별도 권한이
+        # 필요해 매번 묻는 값이 아니다. --reporter 로 들어온 값만 그대로 흘려보낸다.
+        payload["reporter_pending"] = pre["reporter_pending"]
     if story_points is not None:
         payload["story_points"] = story_points
     if duedate is not None:
@@ -362,14 +371,16 @@ def _cmd_interactive(cfg: TakoConfig) -> int:
 _ACCOUNT_ID_RE = re.compile(r"^[a-zA-Z0-9:\-]+$")
 
 
-def _resolve_assignee(value: str, client: JiraSiteClient) -> tuple[str, str]:
+def _resolve_user(value: str, client: JiraSiteClient, *, role: str = "담당자") -> tuple[str, str]:
     """사용자 입력 (me / 이메일 / accountId) → (accountId, 표시 라벨).
 
+    role 은 오류 문구 앞에 붙는 역할 이름 — 담당자(assignee) / 보고자(reporter)
+    양쪽이 같은 해석 규칙을 쓰므로 문구만 갈아 끼운다.
     실패 시 SystemExit(2). 메시지는 호출 전후 맥락이 있는 가정.
 
     list_query._assignee_clause 와 의도적 분리:
     저쪽은 JQL 문자열만 만들어 currentUser()/이메일 그대로 두면 Jira 가 해석.
-    여기는 issue 생성 페이로드 fields.assignee 에 *accountId 가 필수* 라서
+    여기는 issue 생성 페이로드의 사용자 필드에 *accountId 가 필수* 라서
     REST 두 번(/myself, /user/search) 으로 직접 해석한다.
     """
     v = value.strip()
@@ -377,11 +388,11 @@ def _resolve_assignee(value: str, client: JiraSiteClient) -> tuple[str, str]:
         try:
             data = client.get_myself()
         except JiraApiError as exc:
-            sys.stderr.write(f"[담당자] 본인 정보 조회 실패: {exc}\n")
+            sys.stderr.write(f"[{role}] 본인 정보 조회 실패: {exc}\n")
             raise SystemExit(2)
         acc = data.get("accountId")
         if not acc:
-            sys.stderr.write("[담당자] myself 응답에 accountId 없음.\n")
+            sys.stderr.write(f"[{role}] myself 응답에 accountId 없음.\n")
             raise SystemExit(2)
         name = data.get("displayName") or "me"
         email = data.get("emailAddress")
@@ -392,7 +403,7 @@ def _resolve_assignee(value: str, client: JiraSiteClient) -> tuple[str, str]:
         try:
             users = client.search_users(v)
         except JiraApiError as exc:
-            sys.stderr.write(f"[담당자] 사용자 검색 실패: {exc}\n")
+            sys.stderr.write(f"[{role}] 사용자 검색 실패: {exc}\n")
             raise SystemExit(2)
         # 이메일 정확 일치 우선
         matches = [u for u in users if (u.get("emailAddress") or "").lower() == v.lower()]
@@ -400,20 +411,20 @@ def _resolve_assignee(value: str, client: JiraSiteClient) -> tuple[str, str]:
             matches = users
         if not matches:
             sys.stderr.write(
-                f"[담당자] 일치하는 사용자 없음: {v!r}\n"
+                f"[{role}] 일치하는 사용자 없음: {v!r}\n"
                 "  사이트 GDPR 설정에 따라 이메일 검색이 제한될 수 있음 — accountId 직접 입력 권장.\n"
             )
             raise SystemExit(2)
         if len(matches) > 1:
             sys.stderr.write(
-                f"[담당자] 이메일 검색 결과가 {len(matches)}건. 정확히 1건만 허용.\n"
+                f"[{role}] 이메일 검색 결과가 {len(matches)}건. 정확히 1건만 허용.\n"
                 "  accountId 직접 입력 또는 다른 검색어 사용.\n"
             )
             raise SystemExit(2)
         u = matches[0]
         acc = u.get("accountId")
         if not acc:
-            sys.stderr.write("[담당자] 검색 결과에 accountId 없음.\n")
+            sys.stderr.write(f"[{role}] 검색 결과에 accountId 없음.\n")
             raise SystemExit(2)
         name = u.get("displayName") or v
         return acc, f"{name} ({v})"
@@ -423,11 +434,42 @@ def _resolve_assignee(value: str, client: JiraSiteClient) -> tuple[str, str]:
         return v, v
 
     sys.stderr.write(
-        f"[담당자] 형식 미지원: {value!r}\n"
+        f"[{role}] 형식 미지원: {value!r}\n"
         "  지원: 'me' / 이메일 / accountId\n"
         "  한국어 이름·닉네임은 v1.x 미지원.\n"
     )
     raise SystemExit(2)
+
+
+def _can_modify_reporter(client: JiraSiteClient, project_key: str) -> bool:
+    """보고자를 지정해도 되는 프로젝트인지 미리 확인.
+
+    Jira 는 MODIFY_REPORTER(팀 관리형 이름은 'Edit reporters') 를 기본적으로
+    프로젝트 관리자에게만 준다. 권한 없이 fields.reporter 를 실어 보내면
+    POST /issue 가 통째로 400 이라 *티켓 자체가 안 만들어진다*. 링크 실패처럼
+    부분 실패로 끝나지 않으니, 미리보기·확인 단계로 사용자 시간을 쓰기 전에
+    한 번 물어보고 접는다.
+
+    판정이 안 될 때(조회 실패·응답 모양 이상)는 막지 않는다. 확인용 호출이
+    본 작업을 가로막는 쪽이 더 나쁘다.
+    """
+    try:
+        allowed = client.check_project_permission("MODIFY_REPORTER", project_key=project_key)
+    except JiraApiError as exc:
+        sys.stderr.write(f"[보고자] 권한 확인 실패, 확인 없이 진행: {exc}\n")
+        return True
+    if allowed is None:
+        sys.stderr.write("[보고자] 권한 판정 불가, 확인 없이 진행.\n")
+        return True
+    if allowed:
+        return True
+    sys.stderr.write(
+        f"[보고자] {project_key} 프로젝트에서 보고자를 지정할 권한이 없음.\n"
+        "  Jira 는 'Modify Reporter' (팀 관리형은 'Edit reporters') 권한을\n"
+        "  기본적으로 프로젝트 관리자에게만 부여한다.\n"
+        "  --reporter 를 빼면 본인이 보고자로 생성됨.\n"
+    )
+    return False
 
 
 def _cmd_init(args: argparse.Namespace) -> int:
@@ -458,6 +500,8 @@ def _cmd_new(args: argparse.Namespace, cfg: TakoConfig) -> int:
         prefilled["labels"] = list(args.label)
     if args.assignee:
         prefilled["assignee_pending"] = args.assignee
+    if args.reporter:
+        prefilled["reporter_pending"] = args.reporter
     if args.story_points is not None:
         prefilled["story_points"] = args.story_points
     if args.duedate:
@@ -489,10 +533,20 @@ def _cmd_new(args: argparse.Namespace, cfg: TakoConfig) -> int:
     # cfg.default_assignee 어느 경로든 미해결 입력은 'assignee_pending' 키로 들어옴.
     pending = payload.pop("assignee_pending", None)
     if pending:
-        acc, label = _resolve_assignee(pending, client)
+        acc, label = _resolve_user(pending, client, role="담당자")
         payload["assignee"] = acc
         payload["assignee_label"] = label
         sys.stderr.write(f"[담당자] {pending} → {label}\n")
+
+    # 보고자 해석 — 담당자와 같은 규칙이되, 권한 확인이 먼저다.
+    reporter_pending = payload.pop("reporter_pending", None)
+    if reporter_pending:
+        if not _can_modify_reporter(client, payload.get("project") or cfg.jira.default_project):
+            return 2
+        acc, label = _resolve_user(reporter_pending, client, role="보고자")
+        payload["reporter"] = acc
+        payload["reporter_label"] = label
+        sys.stderr.write(f"[보고자] {reporter_pending} → {label}\n")
 
     try:
         draft = IssueDraft.from_payload(payload)
@@ -519,6 +573,13 @@ def _cmd_new(args: argparse.Namespace, cfg: TakoConfig) -> int:
         result = client.create_issue(fields)
     except JiraApiError as exc:
         sys.stderr.write(f"[jira] {exc}\n")
+        if draft.reporter and "reporter" in str(exc):
+            # 권한은 통과했는데도 거부된 경우 — 남는 원인은 화면 구성이다.
+            sys.stderr.write(
+                "  보고자 지정이 거부됨. 권한이 있어도 Reporter 필드가 프로젝트의\n"
+                "  Edit / View 화면에 없으면 같은 오류가 난다.\n"
+                "  --reporter 를 빼면 본인이 보고자로 생성됨.\n"
+            )
         return 2
 
     sys.stderr.write(f"\n생성 완료\n  키:   {result.key}\n  링크: {result.url}\n")

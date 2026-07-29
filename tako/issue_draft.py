@@ -56,6 +56,10 @@ class IssueDraft:
     # 미리보기·로그 전용 표시 문자열 ("강민성 (foo@bar.com)" 형태).
     # 페이로드에는 안 들어감. assignee 가 accountId 라 사용자가 못 알아보는 문제 완화.
     assignee_label: str | None = None
+    # 보고자. 미지정이면 Jira 가 인증 사용자를 자동으로 넣는다 — 그게 대부분의 정상 경로다.
+    # 값을 실으려면 프로젝트에 MODIFY_REPORTER 권한이 있어야 한다 (main._ensure_can_modify_reporter).
+    reporter: str | None = None
+    reporter_label: str | None = None
     story_points: int | None = None
     duedate: str | None = None  # YYYY-MM-DD
     # ((target_key, type_name), ...) — 새 티켓 기준 outward 관계.
@@ -83,6 +87,13 @@ class IssueDraft:
         assignee_label = data.get("assignee_label")
         if assignee_label is not None and not isinstance(assignee_label, str):
             raise DraftError("assignee_label 는 문자열이어야 함.")
+
+        reporter = data.get("reporter")
+        if reporter is not None and not isinstance(reporter, str):
+            raise DraftError("reporter 는 문자열이어야 함.")
+        reporter_label = data.get("reporter_label")
+        if reporter_label is not None and not isinstance(reporter_label, str):
+            raise DraftError("reporter_label 는 문자열이어야 함.")
 
         sp_raw = data.get("story_points")
         story_points: int | None = None
@@ -118,6 +129,8 @@ class IssueDraft:
             labels=tuple(label.strip() for label in labels_raw if label.strip()),
             assignee=(assignee.strip() if assignee else None) or None,
             assignee_label=(assignee_label.strip() if assignee_label else None) or None,
+            reporter=(reporter.strip() if reporter else None) or None,
+            reporter_label=(reporter_label.strip() if reporter_label else None) or None,
             story_points=story_points,
             duedate=duedate,
             links=tuple(links),
@@ -148,6 +161,8 @@ def build_payload(
     if draft.assignee:
         # draft.assignee_label 은 표시 전용 — 페이로드에는 accountId 만 실음.
         fields_block["assignee"] = {"accountId": draft.assignee}
+    if draft.reporter:
+        fields_block["reporter"] = {"accountId": draft.reporter}
     if draft.duedate:
         fields_block["duedate"] = draft.duedate
 
@@ -188,6 +203,8 @@ def render_preview(draft: IssueDraft) -> str:
         lines.append(f"라벨:    {', '.join(draft.labels)}")
     if draft.assignee:
         lines.append(f"담당자:   {draft.assignee_label or draft.assignee}")
+    if draft.reporter:
+        lines.append(f"보고자:   {draft.reporter_label or draft.reporter}")
     if draft.story_points is not None:
         lines.append(f"SP:      {draft.story_points}")
     if draft.duedate:
