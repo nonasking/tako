@@ -76,9 +76,16 @@ sort is applied" \
   --yes
 ```
 
-`--assignee` / `--story-points` / `--duedate` / `--link` are optional. In interactive mode, leaving the input blank also skips them.
+`--assignee` / `--reporter` / `--story-points` / `--duedate` / `--link` are optional. In interactive mode, leaving the input blank also skips them — except `--reporter`, which interactive mode never asks about (see below).
 
 `--assignee` accepts `me` (yourself, one `/myself` call), an email (one `/user/search` call, only an exact single match is allowed), or an accountId directly. Korean names/nicknames are unsupported in v1.x. Email search may be blocked depending on the site's GDPR settings — work around it by entering the accountId directly. Setting `jira.default_assignee` in config to 'me'/email/accountId applies it as the default in interactive blank-input / auto mode where `--assignee` is omitted.
+
+`--reporter` sets who the ticket is filed *on behalf of*. It takes the same values as `--assignee` (`me` / email / accountId) and resolves them the same way. Two things make it different:
+
+- **It is off by default and never prompted for.** Omit it and Jira files the ticket under the authenticated user, which is what you want almost every time. Interactive mode doesn't ask, and there is no `default_reporter` config key.
+- **Most accounts can't use it.** Jira grants `Modify Reporter` (called *Edit reporters* in team-managed projects) to project administrators only by default — in team-managed projects the built-in Member and Viewer roles cannot be given it at all without creating a custom role. Since a rejected reporter fails the *whole* create call, `tako new` checks `/mypermissions` first and stops before the REST call rather than losing the ticket. If the permission check itself can't be answered, it proceeds anyway and lets Jira decide.
+
+Even with the permission, the Reporter field must be present on the project's Edit/View screens — otherwise Jira rejects it with the same "cannot be set" error, and `tako new` points at that second cause.
 
 `--link KEY[:TYPE]` is repeatable. When TYPE is omitted, `Relates` is applied. Common TYPEs: `Blocks` / `Relates` / `Duplicates` / `Causes` / `Clones` (varies per site). Check your site's link types:
 

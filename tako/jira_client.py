@@ -153,6 +153,28 @@ class JiraSiteClient:
         data = resp.json()
         return data if isinstance(data, list) else []
 
+    def check_project_permission(self, permission: str, *, project_key: str) -> bool | None:
+        """GET /rest/api/3/mypermissions — 이 프로젝트에서 해당 권한을 갖고 있는지.
+
+        permissions 파라미터는 필수다 (빈 조회는 Atlassian 이 막았다). 권한 키는
+        Jira 내장 이름 그대로 — 예: MODIFY_REPORTER.
+        반환 True/False. 응답에 해당 키가 없거나 모양이 다르면 None(판정 불가) —
+        호출자가 '막지 말고 진행' 을 택할 수 있게 예외 대신 None 으로 알린다.
+        """
+        from urllib.parse import quote
+        resp = self._request(
+            "GET",
+            f"mypermissions?projectKey={quote(project_key)}&permissions={quote(permission)}",
+        )
+        if resp.status_code != 200:
+            raise JiraApiError(_format_error(resp))
+        data = resp.json()
+        block = data.get("permissions") if isinstance(data, dict) else None
+        entry = block.get(permission) if isinstance(block, dict) else None
+        if not isinstance(entry, dict) or "havePermission" not in entry:
+            return None
+        return bool(entry["havePermission"])
+
     def update_issue_fields(self, key: str, fields: dict[str, Any]) -> None:
         """PUT /rest/api/3/issue/<key> — 필드 업데이트.
 
