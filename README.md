@@ -10,7 +10,7 @@ Every path — shell or slash command — funnels into the same dispatcher, and 
 
 ```mermaid
 flowchart TD
-    SLASH["Claude Code slash commands<br/>/tako · /tako-update · /tako-check · /tako-list · /tako-guide<br/>(LLM drafts title + body from session context)"]
+    SLASH["Claude Code slash commands<br/>/tako · /tako-read · /tako-check · /tako-update · /tako-retype · /tako-list · /tako-guide<br/>(LLM drafts title + body from session context)"]
     SHELL["shell<br/>tako new · list · show · update · retype · fields · guide · init"]
     SLASH -->|"builds the shell call"| SHELL
     SHELL --> MAIN["main.py — argparse dispatcher (run)"]
@@ -28,7 +28,7 @@ flowchart TD
     CFG --> CLIENT["jira_client.py<br/>one requests.Session (reused)<br/>1 retry on connection/timeout only<br/>_format_error → 401 / 403 / 400·422 / 429 / 5xx"]
     AUTH --> CLIENT
     CLIENT <--> ADF["markdown ↔ ADF<br/>md-to-adf · adf_to_md.py"]
-    CLIENT --> REST["Jira Cloud REST v3<br/>POST /issue · POST /search/jql · GET·PUT /issue/&lt;key&gt;<br/>/issue/&lt;key&gt;/editmeta · /myself · /user/search · /field · /issueLink"]
+    CLIENT --> REST["Jira Cloud REST v3<br/>POST /issue · POST /search/jql · GET·PUT /issue/&lt;key&gt;<br/>/issue/&lt;key&gt;/editmeta · /myself · /user/search<br/>/mypermissions · /field · /issueLink"]
     REST --> OUT["issue key + URL (clipboard.py auto-copy)<br/>· text table · JSON · CSV"]
 ```
 
@@ -395,7 +395,7 @@ python -m unittest discover -s tests -v    # all
 python -m unittest tests.test_list_query   # a single module
 ```
 
-Covers the pure logic: JQL building (`test_list_query.py` — shorthand/comparison/range dates, due, story points, escaping), config validation messages (`test_config.py`), REST error mapping and the ADF conversion boundary (`test_jira_client.py`), and issue-type matching for `retype` (`test_retype.py`) and the body guide (`test_guide.py`).
+Covers the pure logic: JQL building (`test_list_query.py` — shorthand/comparison/range dates, due, story points, escaping), config validation messages (`test_config.py`), REST error mapping and the ADF conversion boundary (`test_jira_client.py`), issue-type matching for `retype` (`test_retype.py`), the body guide (`test_guide.py`), the sub-task/link lines of `show` (`test_show_render.py`), and the reporter path — payload, preview, and the permission pre-check (`test_reporter.py`).
 
 ## Troubleshooting
 
