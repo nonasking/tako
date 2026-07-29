@@ -1208,6 +1208,18 @@ def _render_issue_text(issue: dict[str, Any], comments: list[dict[str, Any]], *,
     if labels:
         lines.append(f"라벨:     {', '.join(labels)}")
     lines.append(f"링크:     https://{site}/browse/{key}")
+
+    children = _child_lines(fields.get("subtasks"))
+    if children:
+        lines.append("")
+        lines.append(f"--- 하위 이슈 ({len(children)}) ---")
+        lines.extend(children)
+    related = _related_lines(fields.get("issuelinks"))
+    if related:
+        lines.append("")
+        lines.append(f"--- 연결된 이슈 ({len(related)}) ---")
+        lines.extend(related)
+
     lines.append("")
     lines.append("--- 설명 ---")
     lines.append(description_md or "(비어 있음)")
@@ -1221,6 +1233,48 @@ def _render_issue_text(issue: dict[str, Any], comments: list[dict[str, Any]], *,
             lines.append(f"\n[{created}] {author}")
             lines.append(body_md or "(비어 있음)")
     return "\n".join(lines)
+
+
+def _brief(item: dict[str, Any]) -> str:
+    """{key, fields:{summary, status}} → 'WL-101 [진행중] 제목' 한 줄."""
+    key = item.get("key", "?")
+    f = item.get("fields") or {}
+    status = (f.get("status") or {}).get("name")
+    summary = f.get("summary") or ""
+    head = f"{key} [{status}]" if status else key
+    return f"{head} {summary}".rstrip()
+
+
+def _child_lines(subtasks: Any) -> list[str]:
+    if not isinstance(subtasks, list):
+        return []
+    return [f"  {_brief(t)}" for t in subtasks if isinstance(t, dict)]
+
+
+def _related_lines(issuelinks: Any) -> list[str]:
+    """issuelinks → '  blocks → WL-200 [완료] 제목'.
+
+    방향에 따라 표기어가 갈린다. outwardIssue 가 실려 오면 *이 이슈가* type.outward
+    관계를 거는 쪽(예: blocks), inwardIssue 면 받는 쪽(예: is blocked by).
+    한 항목에 둘 중 하나만 들어온다.
+    """
+    if not isinstance(issuelinks, list):
+        return []
+    out: list[str] = []
+    for link in issuelinks:
+        if not isinstance(link, dict):
+            continue
+        link_type = link.get("type") or {}
+        target = link.get("outwardIssue")
+        phrase = link_type.get("outward")
+        if not isinstance(target, dict):
+            target = link.get("inwardIssue")
+            phrase = link_type.get("inward")
+        if not isinstance(target, dict):
+            continue
+        phrase = phrase or link_type.get("name") or "관련"
+        out.append(f"  {phrase} → {_brief(target)}")
+    return out
 
 
 def _cmd_fields_set(args: argparse.Namespace) -> int:
