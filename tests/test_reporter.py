@@ -13,7 +13,7 @@ from contextlib import redirect_stderr
 from tako.auth import Credentials
 from tako.issue_draft import DraftError, IssueDraft, build_payload, render_preview
 from tako.jira_client import JiraApiError, JiraSiteClient
-from tako.main import _can_modify_reporter
+from tako.cmd_new import _can_modify_reporter
 
 
 BASE = {
@@ -91,6 +91,7 @@ def _client(response) -> tuple[JiraSiteClient, FakeSession]:
     )
     session = FakeSession(response)
     client._session = session  # type: ignore[attr-defined]
+    client._sleep = lambda _s: None  # 재시도 대기 없이 즉시 — 테스트 시간 절약
     return client, session
 
 

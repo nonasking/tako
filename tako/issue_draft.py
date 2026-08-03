@@ -9,9 +9,10 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from .patterns import ISSUE_KEY_RE
+
 
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-_ISSUE_KEY = re.compile(r"^[A-Z][A-Z0-9_]*-\d+$")
 DEFAULT_LINK_TYPE = "Relates"
 
 
@@ -37,7 +38,7 @@ def _parse_link_item(item: Any) -> tuple[str, str]:
     if not isinstance(target, str) or not target.strip():
         raise DraftError(f"link target 이 비었음: {item!r}")
     target = target.strip().upper()
-    if not _ISSUE_KEY.match(target):
+    if not ISSUE_KEY_RE.match(target):
         raise DraftError(f"link target 키 형식 아님: {target!r} (예: WL-1234)")
     if not isinstance(type_name, str) or not type_name.strip():
         raise DraftError(f"link type 이 비었음: {item!r}")

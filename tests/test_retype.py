@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import unittest
 
-from tako.main import _match_issue_type
+from tako.cmd_edit import _match_issue_type
 
 
 # editmeta fields.issuetype.allowedValues 모양 일부.

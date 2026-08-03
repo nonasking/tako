@@ -9,8 +9,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from .patterns import ISSUE_KEY_RE, looks_like_account_id
 
-_ISSUE_KEY = re.compile(r"^[A-Z][A-Z0-9_]*-\d+$")
+
 _PROJECT_KEY = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _UPDATED_SHORTHAND = re.compile(r"^(\d+)([dhwm])$")  # 7d, 24h, 2w, 1m
 _DATE_ONLY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -76,18 +77,13 @@ def _project_clause(values: tuple[str, ...]) -> str:
     return f"project in ({items})"
 
 
-_ACCOUNT_ID_PATTERN = re.compile(r"^[a-zA-Z0-9:\-]+$")
-
-
 def _assignee_clause(value: str) -> str:
-    # 주의: 패턴 변경 시 main._ACCOUNT_ID_RE 도 함께 맞출 것. 같은 도메인 개념.
     value = value.strip()
     if value.lower() in {"me", "current", "self"}:
         return "assignee = currentUser()"
     if "@" in value:  # 이메일
         return f'assignee = "{_esc(value)}"'
-    if _ACCOUNT_ID_PATTERN.match(value) and len(value) >= 12:
-        # accountId 패턴 ('557058:<uuid>' 또는 24자 hex 등 다양)
+    if looks_like_account_id(value):
         return f'assignee = "{_esc(value)}"'
     raise QueryError(
         f"assignee 값 형식 미지원: {value!r}\n"
@@ -261,7 +257,7 @@ def build_jql(
 
     if filters.parent:
         parent = filters.parent.strip().upper()
-        if not _ISSUE_KEY.match(parent):
+        if not ISSUE_KEY_RE.match(parent):
             raise QueryError(f"parent 키 형식 아님: {parent!r} (예: WL-1234)")
         clauses.append(f"parent = {parent}")
 
