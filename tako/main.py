@@ -10,6 +10,7 @@ import argparse
 import json
 import re
 import sys
+from pathlib import Path
 from typing import Any
 
 from . import __version__
@@ -645,6 +646,13 @@ def _today_kst_str() -> str:
     return datetime.now(tz=kst).strftime("%Y-%m-%d")
 
 
+def _stamp_kst_str() -> str:
+    """KST(UTC+9) 기준 YYYY-MM-DD_HHMMSS. 저장 파일명 충돌 회피용."""
+    from datetime import datetime, timedelta, timezone
+    kst = timezone(timedelta(hours=9))
+    return datetime.now(tz=kst).strftime("%Y-%m-%d_%H%M%S")
+
+
 def _cmd_update(args: argparse.Namespace, cfg: TakoConfig) -> int:
     key = _extract_key(args.key)
 
@@ -1141,7 +1149,9 @@ def _cmd_list(args: argparse.Namespace, cfg: TakoConfig) -> int:
             {"jql": jql, "issues": issues, "has_more": has_more},
             ensure_ascii=False, indent=2,
         )
-        _emit(payload, output_path)
+        saved = _emit(payload, output_path)
+        if saved:
+            sys.stderr.write(f"저장: {saved}  ({len(issues)} 건)\n")
         if args.wizard:
             sys.stderr.write(f"\n[힌트] 같은 조회 다시 쓰려면:\n  {_filters_to_shell_hint(filters, opts)}\n")
         return 0
@@ -1150,9 +1160,9 @@ def _cmd_list(args: argparse.Namespace, cfg: TakoConfig) -> int:
         if not issues:
             sys.stderr.write("(결과 없음 — CSV 헤더만 출력)\n")
         csv_text = issues_to_csv(issues, site=cfg.jira.site, sp_field_id=sp_field_id)
-        _emit(csv_text, output_path)
-        if output_path:
-            sys.stderr.write(f"저장: {output_path}  ({len(issues)} 행)\n")
+        saved = _emit(csv_text, output_path)
+        if saved:
+            sys.stderr.write(f"저장: {saved}  ({len(issues)} 행)\n")
         if args.wizard:
             sys.stderr.write(f"\n[힌트] 같은 조회 다시 쓰려면:\n  {_filters_to_shell_hint(filters, opts)}\n")
         return 0
@@ -1170,15 +1180,43 @@ def _cmd_list(args: argparse.Namespace, cfg: TakoConfig) -> int:
     return 0
 
 
-def _emit(text: str, output_path: str | None) -> None:
+def _reserve_output_path(output_path: str) -> Path:
+    """저장할 실제 경로를 확정한다. 기존 파일은 절대 덮어쓰지 않는다.
+
+    이미 있으면 확장자 *앞*에 KST 타임스탬프를 끼워 비켜간다 (`.csv` 가 끝에 남아야
+    엑셀 연결이 유지됨). 같은 초에 또 겹치면 `-2`, `-3` … 을 덧붙인다.
+    부모 디렉터리가 없으면 만든다.
+    """
+    target = Path(output_path).expanduser()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if not target.exists():
+        return target
+
+    stamp = _stamp_kst_str()
+    stamped = target.with_name(f"{target.stem}-{stamp}{target.suffix}")
+    dup = 2
+    while stamped.exists():
+        stamped = target.with_name(f"{target.stem}-{stamp}-{dup}{target.suffix}")
+        dup += 1
+    sys.stderr.write(f"[출력] {target} 이미 있음 → 덮어쓰지 않고 새 이름으로 저장\n")
+    return stamped
+
+
+def _emit(text: str, output_path: str | None) -> Path | None:
+    """output_path 가 있으면 파일로, 없으면 stdout 으로. 실제 저장 경로를 돌려준다."""
     if output_path:
-        from pathlib import Path
-        Path(output_path).expanduser().write_text(text, encoding="utf-8")
-    else:
-        # stdout 으로 — BOM 포함된 CSV 도 그대로 통과
-        sys.stdout.write(text)
-        if not text.endswith("\n"):
-            sys.stdout.write("\n")
+        try:
+            saved = _reserve_output_path(output_path)
+            saved.write_text(text, encoding="utf-8")
+        except OSError as exc:
+            sys.stderr.write(f"[출력] 저장 실패 ({output_path}): {exc}\n")
+            raise SystemExit(2)
+        return saved
+    # stdout 으로 — BOM 포함된 CSV 도 그대로 통과
+    sys.stdout.write(text)
+    if not text.endswith("\n"):
+        sys.stdout.write("\n")
+    return None
 
 
 def _render_list_table(issues: list[dict[str, Any]], *, sp_field_id: str | None = None) -> str:

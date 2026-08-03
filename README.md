@@ -245,6 +245,10 @@ tako list --assignee me --csv --output my-issues.csv
 tako list --assignee me --csv > my-issues.csv   # stdout redirect also works
 ```
 
+`--output / -o` never overwrites. If the file already exists, a KST timestamp is inserted before the extension
+(`my-issues.csv` → `my-issues-2026-08-03_142530.csv`) and the path actually written is printed to stderr.
+Missing parent directories are created. Note that a shell redirect (`>`) is your shell's job, so it still truncates.
+
 Supported args: `--assignee` (me / email / accountId), `--project` (repeatable, query multiple projects at once), `--status` (repeatable), `--type` (repeatable), `--parent`, `--label` (repeatable), `--updated` / `--created` (`7d`/`1w`/`YYYY-MM-DD` / comparisons like `<=YYYY-MM-DD` / `YYYY-MM-DD..YYYY-MM-DD` range), `--due` (`overdue` / `none` / `set` / `YYYY-MM-DD` / `<=YYYY-MM-DD` etc. / range), `--sp` (integer / `>=N` / `<=N` / `none` / `set`), `--query`, `--jql`, `--limit` (default 20), `--all` (auto-paginate), `--json`, `--csv`, `--output / -o`, `--wizard / -i` (interactive input).
 
 The *range* form for `--updated` / `--created` / `--due` is `YYYY-MM-DD..YYYY-MM-DD` or `YYYY-MM-DD~YYYY-MM-DD` (alias), both endpoints inclusive. It can't be mixed with shorthand (`7d`). If the start is later than the end, it's rejected.
@@ -395,7 +399,7 @@ python -m unittest discover -s tests -v    # all
 python -m unittest tests.test_list_query   # a single module
 ```
 
-Covers the pure logic: JQL building (`test_list_query.py` — shorthand/comparison/range dates, due, story points, escaping), config validation messages (`test_config.py`), REST error mapping and the ADF conversion boundary (`test_jira_client.py`), issue-type matching for `retype` (`test_retype.py`), the body guide (`test_guide.py`), the sub-task/link lines of `show` (`test_show_render.py`), and the reporter path — payload, preview, and the permission pre-check (`test_reporter.py`).
+Covers the pure logic: JQL building (`test_list_query.py` — shorthand/comparison/range dates, due, story points, escaping), config validation messages (`test_config.py`), REST error mapping and the ADF conversion boundary (`test_jira_client.py`), issue-type matching for `retype` (`test_retype.py`), the body guide (`test_guide.py`), the sub-task/link lines of `show` (`test_show_render.py`), the reporter path — payload, preview, and the permission pre-check (`test_reporter.py`), and `--output` path handling — never overwrite, timestamp placement, parent-dir creation (`test_list_output_path.py`).
 
 ## Troubleshooting
 
