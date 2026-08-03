@@ -11,7 +11,8 @@ import unittest
 from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout
 from pathlib import Path
 
-from tako.main import _emit, _reserve_output_path, _stamp_kst_str
+from tako.cmd_common import stamp_kst_str
+from tako.cmd_list import _emit, _reserve_output_path
 
 
 @contextmanager
@@ -26,7 +27,7 @@ def quiet():
 class StampTest(unittest.TestCase):
     def test_shape(self) -> None:
         # YYYY-MM-DD_HHMMSS — 파일명에 그대로 넣어도 안전한 문자만
-        stamp = _stamp_kst_str()
+        stamp = stamp_kst_str()
         self.assertRegex(stamp, r"^\d{4}-\d{2}-\d{2}_\d{6}$")
 
 

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import unittest
 
-from tako.main import _child_lines, _related_lines, _render_issue_text
+from tako.cmd_show import _child_lines, _related_lines, _render_issue_text
 
 
 def _issue(key: str, summary: str, status: str | None) -> dict:
