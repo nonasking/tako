@@ -13,7 +13,7 @@ flowchart TD
     SLASH["Claude Code slash commands<br/>/tako · /tako-read · /tako-check · /tako-update · /tako-retype · /tako-list · /tako-guide<br/>(LLM drafts title + body from session context)"]
     SHELL["shell<br/>tako new · list · show · update · retype · fields · guide · init"]
     SLASH -->|"builds the shell call"| SHELL
-    SHELL --> MAIN["main.py — argparse dispatcher (run)"]
+    SHELL --> MAIN["main.py — argparse dispatcher (run)<br/>cmd_new · cmd_list · cmd_edit · cmd_show (+ cmd_common)"]
 
     MAIN --> CFG["config.py<br/>~/.config/tako/config.yaml<br/>site · default project · issue types · field IDs · epic aliases"]
     MAIN --> AUTH["auth.py<br/>~/.config/tako/credentials.json (chmod 0600)"]
@@ -25,14 +25,14 @@ flowchart TD
     PREVIEW -->|"n"| CANCEL["cancel — exit 1, no REST call"]
     PREVIEW -->|"Y"| CLIENT
 
-    CFG --> CLIENT["jira_client.py<br/>one requests.Session (reused)<br/>1 retry on connection/timeout only<br/>_format_error → 401 / 403 / 400·422 / 429 / 5xx"]
+    CFG --> CLIENT["jira_client.py<br/>one requests.Session (reused)<br/>retries: network · 429 (Retry-After) · idempotent-only 5xx<br/>_format_error → 401 / 403 / 400·422 / 429 / 5xx"]
     AUTH --> CLIENT
     CLIENT <--> ADF["markdown ↔ ADF<br/>md-to-adf · adf_to_md.py"]
     CLIENT --> REST["Jira Cloud REST v3<br/>POST /issue · POST /search/jql · GET·PUT /issue/&lt;key&gt;<br/>/issue/&lt;key&gt;/editmeta · /myself · /user/search<br/>/mypermissions · /field · /issueLink"]
     REST --> OUT["issue key + URL (clipboard.py auto-copy)<br/>· text table · JSON · CSV"]
 ```
 
-Meaningful failures (400/422/403) are reported as-is; only a dropped connection is retried (once). Links are a *separate* request after creation — if a link fails the ticket still stands, and only the failure is reported.
+Meaningful failures (400/422/403) are reported as-is. Retries (up to 2 extra attempts): dropped connections and 429 — respecting `Retry-After` — always; 5xx only for idempotent calls. `POST /issue` is *never* retried on 5xx, since the server may have already created the ticket. Links are a *separate* request after creation — if a link fails the ticket still stands, and only the failure is reported.
 
 ## Prerequisites
 
@@ -249,7 +249,7 @@ tako list --assignee me --csv > my-issues.csv   # stdout redirect also works
 (`my-issues.csv` → `my-issues-2026-08-03_142530.csv`) and the path actually written is printed to stderr.
 Missing parent directories are created. Note that a shell redirect (`>`) is your shell's job, so it still truncates.
 
-Supported args: `--assignee` (me / email / accountId), `--project` (repeatable, query multiple projects at once), `--status` (repeatable), `--type` (repeatable), `--parent`, `--label` (repeatable), `--updated` / `--created` (`7d`/`1w`/`YYYY-MM-DD` / comparisons like `<=YYYY-MM-DD` / `YYYY-MM-DD..YYYY-MM-DD` range), `--due` (`overdue` / `none` / `set` / `YYYY-MM-DD` / `<=YYYY-MM-DD` etc. / range), `--sp` (integer / `>=N` / `<=N` / `none` / `set`), `--query`, `--jql`, `--limit` (default 20), `--all` (auto-paginate), `--json`, `--csv`, `--output / -o`, `--wizard / -i` (interactive input).
+Supported args: `--assignee` (me / email / accountId), `--project` (repeatable, query multiple projects at once), `--status` (repeatable), `--type` (repeatable), `--parent`, `--label` (repeatable), `--updated` / `--created` (`7d`/`1w`/`YYYY-MM-DD` / comparisons like `<=YYYY-MM-DD` / `YYYY-MM-DD..YYYY-MM-DD` range), `--due` (`overdue` / `none` / `set` / `YYYY-MM-DD` / `<=YYYY-MM-DD` etc. / range), `--sp` (integer / `>=N` / `<=N` / `none` / `set`), `--query`, `--jql`, `--limit` (default 20 — caps total results, auto-paging past 100), `--all` (fetch everything, ignores `--limit`), `--json`, `--csv`, `--output / -o`, `--wizard / -i` (interactive input).
 
 The *range* form for `--updated` / `--created` / `--due` is `YYYY-MM-DD..YYYY-MM-DD` or `YYYY-MM-DD~YYYY-MM-DD` (alias), both endpoints inclusive. It can't be mixed with shorthand (`7d`). If the start is later than the end, it's rejected.
 
@@ -274,7 +274,7 @@ tako list -i  # answering "Project: 전체", "Max: 전체" in interactive mode d
 
 > Note: specifying only `--project 전체` with no other condition would mean *every issue on the entire site* and is rejected. Give at least one other condition with it.
 
-`--all` auto-repeats every page (100 max per page). Beware large result sets — 943 issues span about 10 pages.
+`--all` auto-repeats every page (100 max per page). Beware large result sets — 943 issues span about 10 pages. A `--limit` above 100 also pages automatically, but stops at the cap (e.g. `--limit 250` → 3 requests, 250 rows).
 
 Default columns: `key, status, type, assignee, created, updated, duedate, summary, parent, url`. If your config has a `jira.fields.story_points` mapping, a `story_points` column is auto-added right after `type`. Without the mapping, SP filter/column are disabled with a notice.
 
@@ -375,16 +375,25 @@ tako/
 │   ├── tako-list.md        /tako-list slash command (list)
 │   └── tako-guide.md       /tako-guide slash command (customize body guide)
 ├── tako/                   Python package
+│   ├── main.py              entry point — argparse + dispatch (init / guide / fields stay here)
+│   ├── cmd_common.py        shared subcommand helpers (config/creds → client, KST stamps)
+│   ├── cmd_new.py           new / preview / build / interactive (create family)
+│   ├── cmd_list.py          list — filters → JQL → pagination → text/csv/json
+│   ├── cmd_edit.py          update / retype (edit family)
+│   ├── cmd_show.py          show (single-issue view)
 │   ├── auth.py              credentials loader
-│   ├── jira_client.py       REST + ADF conversion entry point
+│   ├── config.py            settings + init wizard
+│   ├── jira_client.py       REST client (session reuse, retry policy) + md→ADF entry
 │   ├── adf_to_md.py         ADF → markdown
 │   ├── issue_draft.py       payload builder + preview
+│   ├── list_query.py        list filters → JQL clauses
+│   ├── list_output.py       list formatters — CSV / width-aware text table
+│   ├── patterns.py          shared issue-key / accountId patterns
 │   ├── fields.py            custom field mapping helper
-│   ├── prompts.py           interactive input
-│   ├── config.py            settings + init wizard
+│   ├── prompts.py           interactive input (EOF-safe)
 │   ├── guide.py             body-guide load/create
-│   ├── templates/           bundled resources (default guide, etc.)
-│   └── main.py              entry point
+│   ├── clipboard.py         best-effort URL copy (pbcopy / xclip / xsel)
+│   └── templates/           bundled resources (default guide, etc.)
 ├── config.example.yaml     example config
 ├── tests/                  stdlib unittest suite (no network)
 └── install.sh              register slash commands (optional)
@@ -399,7 +408,7 @@ python -m unittest discover -s tests -v    # all
 python -m unittest tests.test_list_query   # a single module
 ```
 
-Covers the pure logic: JQL building (`test_list_query.py` — shorthand/comparison/range dates, due, story points, escaping), config validation messages (`test_config.py`), REST error mapping and the ADF conversion boundary (`test_jira_client.py`), issue-type matching for `retype` (`test_retype.py`), the body guide (`test_guide.py`), the sub-task/link lines of `show` (`test_show_render.py`), the reporter path — payload, preview, and the permission pre-check (`test_reporter.py`), and `--output` path handling — never overwrite, timestamp placement, parent-dir creation (`test_list_output_path.py`).
+Covers the pure logic: JQL building (`test_list_query.py` — shorthand/comparison/range dates, due, story points, escaping), config validation messages (`test_config.py`), REST error mapping, the retry policy, and the ADF conversion boundary (`test_jira_client.py`), list pagination / filter assembly / shell hints (`test_cmd_list.py`), CSV and width-aware table formatting (`test_list_output.py`), prompt EOF handling (`test_prompts.py`), issue-type matching for `retype` (`test_retype.py`), the body guide (`test_guide.py`), the sub-task/link lines of `show` (`test_show_render.py`), the reporter path — payload, preview, and the permission pre-check (`test_reporter.py`), and `--output` path handling — never overwrite, timestamp placement, parent-dir creation (`test_list_output_path.py`).
 
 ## Troubleshooting
 

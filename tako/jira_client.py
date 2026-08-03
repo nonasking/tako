@@ -1,6 +1,7 @@
 """Jira REST v3 클라이언트.
 
-POST /issue 만 처리. 422/400 같은 의미 있는 실패는 즉시 보고, 네트워크 끊김만 1회 재시도.
+422/400 같은 의미 있는 실패는 즉시 보고. 재시도는 _request 의 정책 참고 —
+네트워크 끊김·429 는 재시도, 5xx 는 멱등 호출만 (POST /issue 중복 생성 방지).
 """
 
 from __future__ import annotations
@@ -25,11 +26,17 @@ class CreatedIssue:
     raw: dict[str, Any]
 
 
+# 429 Retry-After 가 없거나 비상식적으로 클 때의 대기 상한 (초)
+_MAX_RETRY_AFTER = 15.0
+
+
 class JiraSiteClient:
-    def __init__(self, site: str, creds: Credentials, *, timeout: float = 10.0):
+    def __init__(self, site: str, creds: Credentials, *, timeout: float = 10.0, max_attempts: int = 3):
         self._site = site.rstrip("/")
         self._auth = creds.as_basic_auth()
         self._timeout = timeout
+        self._max_attempts = max(1, max_attempts)
+        self._sleep = time.sleep  # 테스트에서 대기 없이 재시도 검증할 수 있게 주입점
         self._session = requests.Session()
         self._session.headers.update({
             "Accept": "application/json",
@@ -43,20 +50,45 @@ class JiraSiteClient:
     def _endpoint(self, path: str) -> str:
         return f"https://{self._site}/rest/api/3/{path.lstrip('/')}"
 
-    def _request(self, method: str, path: str, *, json: Any | None = None) -> requests.Response:
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: Any | None = None,
+        retry_responses: bool | None = None,
+    ) -> requests.Response:
+        """재시도 정책:
+
+        - 연결 오류/타임아웃: 항상 재시도 — 요청이 서버에 닿기 전 실패.
+        - 429: 항상 재시도 — 처리 전에 거절된 요청이라 중복 위험 없음. Retry-After 존중.
+        - 5xx: *멱등 호출만* 재시도. POST /issue 는 서버가 처리를 마쳤을 수도 있어
+          재시도하면 티켓이 중복 생성될 수 있다. 기본값은 메서드로 추정
+          (GET/PUT/DELETE = 재시도) — 검색처럼 POST 여도 안전한 곳은 호출자가
+          retry_responses=True 로 명시한다.
+        """
+        if retry_responses is None:
+            retry_responses = method.upper() in ("GET", "PUT", "DELETE")
         url = self._endpoint(path)
-        last_exc: Exception | None = None
-        for attempt in (1, 2):
+        for attempt in range(1, self._max_attempts + 1):
+            last_try = attempt == self._max_attempts
             try:
-                return self._session.request(
+                resp = self._session.request(
                     method, url, json=json, auth=self._auth, timeout=self._timeout
                 )
             except (requests.ConnectionError, requests.Timeout) as exc:
-                last_exc = exc
-                if attempt == 2:
-                    break
-                time.sleep(1.0)
-        raise JiraApiError(f"네트워크 오류: {last_exc}") from last_exc
+                if last_try:
+                    raise JiraApiError(f"네트워크 오류: {exc}") from exc
+                self._sleep(float(attempt))
+                continue
+            if resp.status_code == 429 and not last_try:
+                self._sleep(min(_retry_after_seconds(resp) or attempt * 2.0, _MAX_RETRY_AFTER))
+                continue
+            if 500 <= resp.status_code < 600 and retry_responses and not last_try:
+                self._sleep(float(attempt))
+                continue
+            return resp
+        raise AssertionError("unreachable")  # 루프가 항상 return/raise 로 끝남
 
     def create_issue(self, fields: dict[str, Any]) -> CreatedIssue:
         # fields = build_payload()['payload']['fields']
@@ -79,9 +111,16 @@ class JiraSiteClient:
             raise JiraApiError(f"field 응답이 리스트가 아님: {type(data).__name__}")
         return data
 
-    def get_issue(self, key: str) -> dict[str, Any]:
-        """GET /rest/api/3/issue/<key> — 단일 이슈 상세."""
-        resp = self._request("GET", f"issue/{key}")
+    def get_issue(self, key: str, *, fields: list[str] | None = None) -> dict[str, Any]:
+        """GET /rest/api/3/issue/<key> — 단일 이슈 상세.
+
+        fields 를 주면 그 필드만 수신 (update/retype 처럼 일부만 쓰는 호출의
+        전송량 절약). 생략하면 전체 — show 가 이 경로.
+        """
+        path = f"issue/{key}"
+        if fields:
+            path += "?fields=" + ",".join(fields)
+        resp = self._request("GET", path)
         if resp.status_code == 200:
             return resp.json()
         if resp.status_code == 404:
@@ -206,10 +245,23 @@ class JiraSiteClient:
             body["fields"] = list(fields)
         if next_page_token:
             body["nextPageToken"] = next_page_token
-        resp = self._request("POST", "search/jql", json=body)
+        # POST 지만 조회라 5xx 재시도 안전 — 기본 추정(POST=재시도 안 함)을 명시로 덮음.
+        resp = self._request("POST", "search/jql", json=body, retry_responses=True)
         if resp.status_code == 200:
             return resp.json()
         raise JiraApiError(_format_error(resp))
+
+
+def _retry_after_seconds(resp: requests.Response) -> float | None:
+    """429 응답의 Retry-After 헤더 (초 단위 정수형만 지원, HTTP-date 는 무시)."""
+    raw = resp.headers.get("Retry-After") if getattr(resp, "headers", None) else None
+    if raw is None:
+        return None
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds >= 0 else None
 
 
 def _format_error(resp: requests.Response) -> str:

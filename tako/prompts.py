@@ -10,7 +10,12 @@ def _prompt(text: str) -> str:
     sys.stderr.write(text)
     sys.stderr.flush()
     line = sys.stdin.readline()
-    return line.rstrip("\n") if line else ""
+    if line == "":
+        # EOF (Ctrl+D) — 빈 줄과 구분해 즉시 중단. 안 그러면 default 없는
+        # ask_text 의 재시도 루프가 "(빈 입력 안 됨)" 을 무한 출력한다.
+        sys.stderr.write("\n입력 종료(EOF) — 취소.\n")
+        raise SystemExit(1)
+    return line.rstrip("\n")
 
 
 def ask_text(prompt: str, default: str | None = None) -> str:
@@ -27,7 +32,12 @@ def ask_text(prompt: str, default: str | None = None) -> str:
 def ask_secret(prompt: str) -> str:
     import getpass
     while True:
-        value = getpass.getpass(f"{prompt}: ").strip()
+        try:
+            value = getpass.getpass(f"{prompt}: ").strip()
+        except EOFError:
+            # getpass 는 EOF 를 예외로 알린다 — _prompt 와 같은 방식으로 중단.
+            sys.stderr.write("\n입력 종료(EOF) — 취소.\n")
+            raise SystemExit(1)
         if value:
             return value
         sys.stderr.write("(빈 입력 안 됨)\n")
