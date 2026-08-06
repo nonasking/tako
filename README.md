@@ -11,7 +11,7 @@ Every path — shell or slash command — funnels into the same dispatcher, and 
 ```mermaid
 flowchart TD
     SLASH["Claude Code slash commands<br/>/tako · /tako-read · /tako-check · /tako-update · /tako-retype · /tako-list · /tako-guide<br/>(LLM drafts title + body from session context)"]
-    SHELL["shell<br/>tako new · list · show · update · retype · fields · guide · init"]
+    SHELL["shell<br/>tako new · list · show · update · retype · fields · guide · slash · init"]
     SLASH -->|"builds the shell call"| SHELL
     SHELL --> MAIN["main.py — argparse dispatcher (run)<br/>cmd_new · cmd_list · cmd_edit · cmd_show (+ cmd_common)"]
 
@@ -37,17 +37,37 @@ Meaningful failures (400/422/403) are reported as-is. Retries (up to 2 extra att
 ## Prerequisites
 
 - macOS / Linux
-- Python ≥ 3.10
 - An Atlassian Cloud account + API token ([id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens))
 - Optional: [Claude Code](https://docs.anthropic.com/claude-code) — only if you use session-context mode
+
+You do **not** need to install Python, git, or pip yourself. The installer handles that.
 
 ## Install
 
 ```bash
-git clone <repo-url> tako && cd tako
-pip install -e .
-./install.sh        # register slash commands (optional)
+curl -fsSL https://raw.githubusercontent.com/nonasking/tako/develop/get-tako.sh | bash
 ```
+
+This installs [uv](https://docs.astral.sh/uv/) if it isn't already there, then puts tako in its own isolated environment. Your system Python is never touched — macOS ships 3.9, which is too old, so uv fetches a private 3.10+ build when needed.
+
+Rather not pipe a script into your shell? These are equivalent:
+
+```bash
+uv tool install tako-shell     # if you have uv
+pipx install tako-shell        # if you have pipx
+```
+
+Re-running any of the three upgrades an existing install.
+
+<details>
+<summary>From source (for working on tako itself)</summary>
+
+```bash
+git clone https://github.com/nonasking/tako.git && cd tako
+pip install -e .
+```
+
+</details>
 
 ## First run
 
@@ -60,7 +80,25 @@ Enter 5 items (site domain / default project / default issue type / email / API 
 - `~/.config/tako/config.yaml` — site·project·issue types
 - `~/.config/tako/credentials.json` — email·token (chmod 0600)
 
-If the files exist, it asks before overwriting. Skip with `--force`. To write them by hand, copy [`config.example.yaml`](./config.example.yaml) and edit.
+`tako init` offers to open the API-token page in your browser, so you don't have to hunt for it. If the files already exist it asks before overwriting; skip that with `--force`.
+
+Forget to run it? Any command that needs config will offer to run `tako init` for you — but only when you're at a terminal. In a script or a slash command it prints instructions and exits instead, so automation never hangs waiting for input.
+
+To write the files by hand instead, see [`config.example.yaml`](./config.example.yaml).
+
+## Slash commands (optional)
+
+Only needed for Claude Code session-context mode:
+
+```bash
+tako slash install          # copies /tako, /tako-read, … into ~/.claude/commands/
+tako slash install --force  # refresh them after upgrading tako
+tako slash list             # show what ships with the package
+```
+
+Existing files are left alone unless you pass `--force`, so local edits survive. Restart Claude Code afterwards.
+
+If you cloned the repo and want to *edit* the commands, run `./install.sh` instead — it symlinks them so your changes apply immediately.
 
 ## Usage — two modes
 
@@ -366,16 +404,17 @@ Honest trade-offs:
 
 ```
 tako/
-├── commands/
-│   ├── tako.md             /tako slash command (create)
-│   ├── tako-read.md        /tako-read slash command (interpret a ticket)
-│   ├── tako-update.md      /tako-update slash command (edit title/body)
-│   ├── tako-check.md       /tako-check slash command (review)
-│   ├── tako-retype.md      /tako-retype slash command (change issue type)
-│   ├── tako-list.md        /tako-list slash command (list)
-│   └── tako-guide.md       /tako-guide slash command (customize body guide)
 ├── tako/                   Python package
-│   ├── main.py              entry point — argparse + dispatch (init / guide / fields stay here)
+│   ├── commands/            slash commands — shipped inside the package so a
+│   │   │                    PyPI install can lay them down without the repo
+│   │   ├── tako.md          /tako (create)
+│   │   ├── tako-read.md     /tako-read (interpret a ticket)
+│   │   ├── tako-update.md   /tako-update (edit title/body)
+│   │   ├── tako-check.md    /tako-check (review)
+│   │   ├── tako-retype.md   /tako-retype (change issue type)
+│   │   ├── tako-list.md     /tako-list (list)
+│   │   └── tako-guide.md    /tako-guide (customize body guide)
+│   ├── main.py              entry point — argparse + dispatch (init / guide / fields / slash stay here)
 │   ├── cmd_common.py        shared subcommand helpers (config/creds → client, KST stamps)
 │   ├── cmd_new.py           new / preview / build / interactive (create family)
 │   ├── cmd_list.py          list — filters → JQL → pagination → text/csv/json
@@ -392,11 +431,16 @@ tako/
 │   ├── fields.py            custom field mapping helper
 │   ├── prompts.py           interactive input (EOF-safe)
 │   ├── guide.py             body-guide load/create
+│   ├── slash.py             lay slash commands down into ~/.claude/commands/
 │   ├── clipboard.py         best-effort URL copy (pbcopy / xclip / xsel)
+│   ├── browser.py           best-effort URL open (open / xdg-open)
 │   └── templates/           bundled resources (default guide, etc.)
+├── .github/workflows/      ci (tests + shellcheck) · release (tag → PyPI)
 ├── config.example.yaml     example config
+├── docs/                   design notes (distribution review, …)
 ├── tests/                  stdlib unittest suite (no network)
-└── install.sh              register slash commands (optional)
+├── get-tako.sh             one-line installer (uv → PyPI → PATH)
+└── install.sh              symlink slash commands, for repo checkouts
 ```
 
 ## Tests
@@ -408,11 +452,34 @@ python -m unittest discover -s tests -v    # all
 python -m unittest tests.test_list_query   # a single module
 ```
 
-Covers the pure logic: JQL building (`test_list_query.py` — shorthand/comparison/range dates, due, story points, escaping), config validation messages (`test_config.py`), REST error mapping, the retry policy, and the ADF conversion boundary (`test_jira_client.py`), list pagination / filter assembly / shell hints (`test_cmd_list.py`), CSV and width-aware table formatting (`test_list_output.py`), prompt EOF handling (`test_prompts.py`), issue-type matching for `retype` (`test_retype.py`), the body guide (`test_guide.py`), the sub-task/link lines of `show` (`test_show_render.py`), the reporter path — payload, preview, and the permission pre-check (`test_reporter.py`), and `--output` path handling — never overwrite, timestamp placement, parent-dir creation (`test_list_output_path.py`).
+Covers the pure logic: JQL building (`test_list_query.py` — shorthand/comparison/range dates, due, story points, escaping), config validation messages (`test_config.py`), REST error mapping, the retry policy, and the ADF conversion boundary (`test_jira_client.py`), list pagination / filter assembly / shell hints (`test_cmd_list.py`), CSV and width-aware table formatting (`test_list_output.py`), prompt EOF handling (`test_prompts.py`), issue-type matching for `retype` (`test_retype.py`), the body guide (`test_guide.py`), the sub-task/link lines of `show` (`test_show_render.py`), the reporter path — payload, preview, and the permission pre-check (`test_reporter.py`), and `--output` path handling — never overwrite, timestamp placement, parent-dir creation (`test_list_output_path.py`). Two more guard the install path: the first-run contract — never prompt when stdin isn't a TTY, and never point at a file only a repo checkout would have (`test_first_run.py`), and slash-command installation — packaging completeness, skip-unless-forced, dangling-symlink repair (`test_slash.py`).
+
+## Releasing
+
+Published to PyPI as [`tako-shell`](https://pypi.org/project/tako-shell/) (the command stays `tako`; the plain `tako` name was already taken). No API token is stored anywhere — [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/) authenticates the workflow over OIDC.
+
+One-time setup on PyPI → *Publishing* → *Add a new pending publisher*:
+
+| Field | Value |
+|---|---|
+| PyPI project name | `tako-shell` |
+| Owner | `nonasking` |
+| Repository | `tako` |
+| Workflow name | `release.yml` |
+| Environment | `pypi` |
+
+Then every release is:
+
+```bash
+# bump version in pyproject.toml first — the workflow refuses a tag that disagrees with it
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+`release.yml` verifies tag ↔ version, runs the tests, builds an sdist + wheel, and publishes. `ci.yml` runs the suite on macOS and Linux against Python 3.10 and 3.13, and shellchecks both installers.
 
 ## Troubleshooting
 
-- `tako: command not found` — not on PATH. `pip install -e .` didn't finish, or a different venv. As a fallback, `python -m tako ...` behaves identically.
+- `tako: command not found` — the install directory isn't on your PATH. Run `uv tool update-shell` and open a new terminal. As a fallback, `uv tool run --from tako-shell tako ...` (or `python -m tako ...` in a source checkout) behaves identically.
 - `설정 파일이 없습니다` (no config file) — `tako init`. For a different path, use the `TAKO_CONFIG_PATH` environment variable.
 - `creds 없음` (no creds) — same as above.
 - `허용 안 된 이슈 타입` (disallowed issue type) — add it under `issue_types` in `~/.config/tako/config.yaml`.
