@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.10", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: install package
+        run: python -m pip install --upgrade pip && python -m pip install -e .
+
+      - name: run tests
+        run: python -m unittest discover -s tests -t .
+
+  installer:
+    # get-tako.sh 는 사용자가 가장 먼저 실행하는 파일 — 문법 오류가 나가면 안 된다.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shell syntax check
+        run: bash -n get-tako.sh
+      - name: shellcheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck get-tako.sh install.sh
