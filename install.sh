@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
-# 슬래시 커맨드 등록 — commands/*.md → ~/.claude/commands/ 심볼릭 링크.
-# Claude Code 에서 /tako, /tako-check 슬래시 쓸 때만 필요.
-# 셸 직접 사용은 install.sh 안 돌려도 됨.
+# 슬래시 커맨드 등록 (저장소를 받아 쓰는 개발용) —
+#   tako/commands/*.md → ~/.claude/commands/ 심볼릭 링크.
+#
+# 링크라서 저장소를 수정하면 즉시 반영된다. 커맨드 자체를 고칠 때 쓰는 방식.
+#
+# 저장소 없이 tako 를 설치했다면(PyPI/원라인 설치) 이 스크립트가 아니라 이걸 쓴다:
+#   tako slash install
+# 그쪽은 패키지에 동봉된 사본을 복사한다 — 업그레이드 후엔 --force 로 갱신.
+#
+# 어느 쪽이든 셸 직접 사용(tako new 등)에는 필요 없다.
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SOURCE_DIR="$REPO_ROOT/commands"
+SOURCE_DIR="$REPO_ROOT/tako/commands"
 TARGET_DIR="$HOME/.claude/commands"
 
 # 등록할 슬래시 커맨드 파일 목록.

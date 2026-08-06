@@ -5,7 +5,7 @@
   cmd_list  list (JQL 검색 + 출력)
   cmd_edit  update / retype (수정 계열)
   cmd_show  show (조회)
-여기 남는 것: 파서, init / guide / fields (config 만 만지는 가벼운 커맨드), run.
+여기 남는 것: 파서, init / guide / fields / slash (config 를 안 타거나 가볍게 만지는 커맨드), run.
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ from .guide import (
 from .jira_client import JiraApiError
 from .list_query import DEFAULT_LIST_LIMIT
 from .prompts import ask_text, stdin_is_tty
+from .slash import SlashError, install_commands, packaged_commands, resolve_commands_dir
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -185,6 +186,13 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     guide_sub.add_parser("reset", help="개인 가이드를 기본값으로 되돌림")
     guide_sub.add_parser("path", help="개인 가이드 경로 출력")
 
+    slash_parser = sub.add_parser("slash", help="Claude Code 슬래시 커맨드 설치")
+    slash_sub = slash_parser.add_subparsers(dest="slash_command", required=True)
+    slash_install = slash_sub.add_parser("install", help="~/.claude/commands/ 로 복사")
+    slash_install.add_argument("--force", action="store_true", help="기존 파일 덮어쓰기")
+    slash_sub.add_parser("list", help="동봉된 커맨드 목록 출력")
+    slash_sub.add_parser("path", help="설치 대상 경로 출력")
+
     return parser.parse_args(argv)
 
 
@@ -219,6 +227,37 @@ def _cmd_guide(args: argparse.Namespace) -> int:
         sys.stderr.write(f"[guide] {exc}\n")
         return 2
     sys.stderr.write(f"unknown guide command: {args.guide_command}\n")
+    return 2
+
+
+def _cmd_slash(args: argparse.Namespace) -> int:
+    # config 와 무관 — 패키지 동봉 파일을 ~/.claude/commands/ 로 옮기는 일만 한다.
+    try:
+        if args.slash_command == "path":
+            sys.stdout.write(f"{resolve_commands_dir()}\n")
+            return 0
+        if args.slash_command == "list":
+            for name, _ in packaged_commands():
+                sys.stdout.write(f"{name}\n")
+            return 0
+        if args.slash_command == "install":
+            target = resolve_commands_dir()
+            written, skipped = install_commands(force=args.force)
+            for name in written:
+                sys.stderr.write(f"  설치: {name}\n")
+            for name in skipped:
+                sys.stderr.write(f"  건너뜀 (이미 있음): {name}\n")
+            sys.stderr.write(f"\n대상: {target}\n")
+            if skipped:
+                sys.stderr.write("덮어쓰려면: tako slash install --force\n")
+            if written:
+                slashes = " ".join(f"/{n.removesuffix('.md')}" for n in written)
+                sys.stderr.write(f"Claude Code 를 다시 시작하면 쓸 수 있다: {slashes}\n")
+            return 0
+    except SlashError as exc:
+        sys.stderr.write(f"[slash] {exc}\n")
+        return 2
+    sys.stderr.write(f"unknown slash command: {args.slash_command}\n")
     return 2
 
 
@@ -313,10 +352,13 @@ def run(argv: list[str] | None = None) -> int:
     if args.command == "guide":
         # config 로드 불필요 — 가이드는 별도 파일.
         return _cmd_guide(args)
+    if args.command == "slash":
+        # config 로드 불필요 — 설정 전에 슬래시 커맨드부터 깔 수 있어야 한다.
+        return _cmd_slash(args)
     if args.command == "fields" and args.fields_command == "set":
         # set 은 config 만 건드림 — 로드는 안 함 (없으면 에러 메시지 자체 처리)
         return _cmd_fields_set(args)
-    cfg = load_config_or_guide(args.config)
+    cfg = load_config_or_guide(args.config, args.credentials)
     match args.command:
         case "new":
             return cmd_new(args, cfg)
