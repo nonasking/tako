@@ -13,6 +13,7 @@ import yaml
 
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "tako" / "config.yaml"
 ENV_OVERRIDE_VAR = "TAKO_CONFIG_PATH"
+TOKEN_PAGE_URL = "https://id.atlassian.com/manage-profile/security/api-tokens"
 
 
 class ConfigError(Exception):
@@ -161,6 +162,11 @@ def _require_str(d: dict[str, Any], dotted_key: str) -> str:
 
 
 def first_run_guide(target_path: Path | None = None) -> str:
+    """설정이 없을 때 띄우는 안내.
+
+    수동 예시를 파일 참조가 아니라 본문에 직접 박아둔다 — PyPI 로 설치한 사용자는
+    저장소를 받은 적이 없어 config.example.yaml 을 가지고 있지 않다.
+    """
     target = target_path or DEFAULT_CONFIG_PATH
     return (
         "tako 처음 사용 — 설정 파일이 없음.\n"
@@ -168,12 +174,20 @@ def first_run_guide(target_path: Path | None = None) -> str:
         "  방법 1) 자동 (추천):\n"
         "     tako init\n"
         "\n"
-        "  방법 2) 수동:\n"
-        f"     mkdir -p {target.parent} && cp config.example.yaml {target}\n"
-        "     그 후 jira.site / default_project / default_issue_type 값을 본인 환경에 맞게 수정.\n"
+        f"  방법 2) 수동 — {target} 을 만들고 아래를 넣는다:\n"
+        "\n"
+        "     jira:\n"
+        "       site: mycompany.atlassian.net\n"
+        "       default_project: WL\n"
+        "       default_issue_type: Task\n"
+        "     issue_types:\n"
+        "       Task: {}\n"
+        "\n"
+        "     인증은 별도 파일이다 — tako init 이 같이 만들어 준다.\n"
         "\n"
         "issue_types 는 키 이름만 정의해도 v1 에서 동작.\n"
-        "다른 경로 쓰려면 TAKO_CONFIG_PATH 환경변수로 지정 가능."
+        "다른 경로 쓰려면 TAKO_CONFIG_PATH 환경변수로 지정 가능.\n"
+        "전체 예시: https://github.com/nonasking/tako/blob/develop/config.example.yaml"
     )
 
 
@@ -183,8 +197,9 @@ def interactive_init(
     force: bool = False,
     credentials_target: Path | None = None,
 ) -> tuple[Path, Path]:
-    # 지연 import — config 가 평소엔 prompts/auth 에 의존하지 않음
+    # 지연 import — config 가 평소엔 prompts/auth/browser 에 의존하지 않음
     from .auth import Credentials, resolve_credentials_path, write_credentials
+    from .browser import open_url
     from .prompts import ask_secret, ask_text, confirm, stdin_is_tty
 
     path = (target or resolve_config_path()).expanduser()
@@ -211,10 +226,15 @@ def interactive_init(
     project = ask_text("기본 프로젝트 키 (예: WL)")
     issue_type = ask_text("기본 이슈 타입 (예: Task, 기능변경)")
     email = ask_text("Atlassian 이메일")
-    token = ask_secret(
-        "Atlassian API 토큰 "
-        "(https://id.atlassian.com/manage-profile/security/api-tokens)"
-    )
+    # 토큰 발급은 브라우저를 거쳐야 하는 유일한 단계 — 여기서 길을 잃는 사람이 제일 많다.
+    if confirm("\nAPI 토큰 발급 페이지를 브라우저에서 열까?", default=True):
+        if open_url(TOKEN_PAGE_URL):
+            sys.stderr.write("  브라우저를 열었다. 'Create API token' 으로 만든 뒤 복사해 온다.\n")
+        else:
+            sys.stderr.write(f"  브라우저를 못 열었다 — 직접 접속: {TOKEN_PAGE_URL}\n")
+    else:
+        sys.stderr.write(f"  발급 주소: {TOKEN_PAGE_URL}\n")
+    token = ask_secret("Atlassian API 토큰 (화면에 표시되지 않음)")
     default_assignee = ask_text(
         "기본 담당자 (선택, 'me'/이메일/accountId, 없으면 Enter)",
         default="",
