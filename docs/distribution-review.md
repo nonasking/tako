@@ -85,9 +85,13 @@ tako-yaki   →  takoyaki   ←  이미 존재 (burner mail, 2022-03)    → 차
 
 **비개발자용 (원라인).**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/nonasking/tako/develop/get-tako.sh | bash
+curl -fsSL https://github.com/nonasking/tako/raw/develop/get-tako.sh | bash
 ```
 스크립트가 하는 일: uv 탐지 → 없으면 설치 → PyPI 에서 `uv tool install --force` → PATH 확인 → `tako init` 안내. Python·git·pip 를 사용자가 인지할 필요가 없어진다. `curl | bash` 를 꺼리는 사람을 위해 스크립트 헤더와 README 양쪽에 동등한 PyPI 경로를 병기했다.
+
+**URL 은 `raw.githubusercontent.com` 이 아니라 `github.com/.../raw/...` 를 쓴다.** 더 짧다는 이유로 되돌리지 말 것 — 저장소 이름을 바꾸면 [raw 도메인은 리다이렉트되지 않는다](https://docs.github.com/en/repositories/creating-and-managing-repositories/renaming-a-repository). 일단 퍼진 설치 명령은 회수할 수 없으므로, 그 경우 원라인이 영구히 깨진다. `github.com` 경로는 저장소 리다이렉트를 타고 raw 로 넘어가므로 이름 변경을 견딘다(이름이 바뀐 저장소로 실측 확인).
+
+저장소 이름 자체는 `tako` 로 유지한다. GitHub 저장소 이름은 소유자별 네임스페이스라 전역 충돌이 없고, 명령어·설정 디렉터리(`~/.config/tako/`)·환경변수·슬래시 커맨드가 모두 `tako` 다. `takopy` 는 PyPI 네임스페이스 제약에서 나온 유통상의 이름이지 프로젝트의 정체성이 아니다.
 
 **mac 개발자 (개인 tap).** `brew install nonasking/tako/tako`. 여유 될 때. homebrew-core 정식 등록은 §3 의 요건 때문에 초기 불가.
 

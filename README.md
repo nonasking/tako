@@ -45,7 +45,7 @@ You do **not** need to install Python, git, or pip yourself. The installer handl
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/nonasking/tako/develop/get-tako.sh | bash
+curl -fsSL https://github.com/nonasking/tako/raw/develop/get-tako.sh | bash
 ```
 
 This installs [uv](https://docs.astral.sh/uv/) if it isn't already there, then puts tako in its own isolated environment. Your system Python is never touched — macOS ships 3.9, which is too old, so uv fetches a private 3.10+ build when needed.
