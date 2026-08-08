@@ -1,0 +1,71 @@
+name: release
+
+# v0.1.0 형태의 태그를 밀면 PyPI 에 발행된다.
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# API 토큰을 저장하지 않는다 — PyPI Trusted Publishing (OIDC) 를 쓴다.
+# 최초 1회 PyPI 쪽 설정이 필요하다. README 의 "Releasing" 절 참고.
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: tag 와 pyproject 버전이 일치하는지 확인
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VERSION=$(python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          echo "tag=$TAG  pyproject=$VERSION"
+          if [ "$TAG" != "$VERSION" ]; then
+            echo "::error::태그($TAG)와 pyproject.toml 버전($VERSION)이 다릅니다."
+            exit 1
+          fi
+
+      - name: install package
+        run: python -m pip install --upgrade pip && python -m pip install -e .
+
+      - name: run tests
+        run: python -m unittest discover -s tests -t .
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: build sdist + wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # Trusted Publishing 에 필요 — 이것만으로 인증된다.
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
