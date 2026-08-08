@@ -29,7 +29,7 @@
 
 - **브라우저 다운로드 경로가 반드시 생긴다.** README의 curl 라인을 무시하고 Releases 페이지에서 zip을 받는 사람이 나온다. `curl`/`wget`은 `com.apple.quarantine` 속성을 붙이지 않지만 **브라우저는 붙인다.** 즉 미서명 단일 바이너리는 그 경로에서 "Apple이 확인할 수 없음"으로 차단된다. → **공개 배포는 단일 바이너리에 불리하게 작용한다.**
 - **낯선 사람에게 `curl | bash`를 실행시켜야 한다.** 원라인은 편하지만 신뢰를 요구한다. 검증 가능한 대안(PyPI, Homebrew tap)을 반드시 병행해야 한다.
-- **이름이 이미 선점돼 있다.** PyPI `tako`는 타인이 점유 중(분산 데이터 스토어). → **`tako-shell` 로 확정.** §5 참조.
+- **이름이 이미 선점돼 있다.** PyPI `tako`는 타인이 점유 중(분산 데이터 스토어). → **`takopy` 로 확정.** §5 참조.
 - **릴리스 자동화가 없으면 유지가 안 된다.** 현재 `.github/workflows` 없음.
 - **슬래시 커맨드가 도달 불가능해진다.** `install.sh` 는 저장소의 `commands/*.md` 를 심볼릭 링크한다 — PyPI 설치자는 저장소가 없다. 설치 방식만 바꾸면 기능이 하나 사라진다. §5 참조.
 
@@ -66,11 +66,22 @@ homebrew-core는 **≥75 stars 또는 ≥30 forks/watchers + 30일 이상**을 �
 
 ## 5. 결정 — 채널 3층
 
-**배포명은 `tako-shell`.** "taco shell" 말장난이자, 의미상으로도 맞다 — 속(본문)은 LLM 이 채우고 껍데기(형식·인증·페이로드·REST)는 결정론적 코드가 잡는다는 아키텍처 그대로다. 실행 명령어는 `tako` 로 유지된다(`[project.scripts]` 가 패키지명과 독립).
+**배포명은 `takopy`.** Python 패키지임을 이름에서 드러낸다. 실행 명령어는 `tako` 로 유지된다(`[project.scripts]` 가 패키지명과 독립). 이름이 기능을 말해주지 않는 대가는 메타데이터로 갚는다 — `keywords = ["jira", "atlassian", "cli", ...]`.
 
-인접한 `takoshell`(Pythonic shell, 마지막 릴리스 2020-06)이 PyPI 에 있지만 정규화상 별개 이름이고 6년째 정지 상태다. 어차피 `takoyaki` 도 선점돼 있어 이 인접 충돌은 어느 후보를 골라도 동일했다. 이름이 기능을 말해주지 않는 대가는 메타데이터로 갚는다 — `keywords = ["jira", "atlassian", "cli", ...]`.
+### PyPI 이름 선정에서 걸린 함정
 
-**정본 (PyPI).** `uv tool install tako-shell` / `pipx install tako-shell`. git·URL 불필요, 검증 가능, 업데이트 경로 명확.
+처음 고른 이름은 `tako-shell` 이었다 — "taco shell" 말장난이자, 속(본문)은 LLM 이 채우고 껍데기(형식·인증·페이로드·REST)는 결정론적 코드가 잡는다는 아키텍처와도 맞았다. **PyPI 가 등록을 거부했다.**
+
+`GET /pypi/<name>/json` 이 404 를 주는 것은 "그 이름이 존재하지 않는다"는 뜻일 뿐, **"등록할 수 있다"는 뜻이 아니다.** PyPI 는 그 위에 [ultranormalization](https://github.com/pypi/warehouse/issues/11139) 을 적용해 혼동 가능한 이름을 막는다. 핵심은 **구분자(`-` `_` `.`)를 아예 제거한 뒤 비교**한다는 것:
+
+```
+tako-shell  →  takoshell  ←  이미 존재 (Pythonic shell, 2020-06) → 차단
+tako-yaki   →  takoyaki   ←  이미 존재 (burner mail, 2022-03)    → 차단
+```
+
+하이픈은 방패가 아니다. 후보를 검증할 때는 **하이픈을 제거한 형태**가 비어 있는지 봐야 한다. 다만 ultranormalization 은 혼동 문자(`l`/`1`, `o`/`0` 등)도 접을 수 있으므로, 최종 판정은 PyPI UI 가 한다.
+
+**정본 (PyPI).** `uv tool install takopy` / `pipx install takopy`. git·URL 불필요, 검증 가능, 업데이트 경로 명확.
 
 **비개발자용 (원라인).**
 ```bash
@@ -86,7 +97,7 @@ curl -fsSL https://raw.githubusercontent.com/nonasking/tako/develop/get-tako.sh 
 
 | # | 사항 | 결정 |
 |---|---|---|
-| 1 | PyPI 패키지명 | **`tako-shell`** — 실행 명령어는 `tako` 유지 |
+| 1 | PyPI 패키지명 | **`takopy`** — 실행 명령어는 `tako` 유지 |
 | 2 | `curl \| bash` 제공 | **제공** — PyPI/pipx 경로를 나란히 병기 |
 | 3 | Claude Code 플러그인 전환 | **보류** — 기존 `/tako` 사용자에게 커맨드명이 깨지는 변경. 설치 문제와 직교하므로 분리 |
 | 4 | 비개발자 첫 실행 UX | **적용** — TTY 한정 자동 init 제안, 토큰 페이지 자동 열기, 안내문에서 저장소 전제 제거 |
