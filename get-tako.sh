@@ -3,19 +3,19 @@
 #
 # What this does, in order:
 #   1. Checks for uv (an isolated Python tool installer). Installs it if absent.
-#   2. Installs the `tako-shell` package from PyPI via `uv tool install`.
+#   2. Installs the `takopy` package from PyPI via `uv tool install`.
 #   3. Reports whether the `tako` command landed on your PATH.
 #
 # It does NOT touch your system Python, and it never runs `sudo`.
 # Nothing is written outside ~/.local and uv's own cache directory.
 #
 # Prefer not to pipe a script into your shell? Both of these work just as well:
-#   uv tool install tako-shell
-#   pipx install tako-shell
+#   uv tool install takopy
+#   pipx install takopy
 
 set -euo pipefail
 
-PACKAGE="tako-shell"
+PACKAGE="takopy"
 COMMAND="tako"
 UV_INSTALLER="https://astral.sh/uv/install.sh"
 BIN_DIR="${UV_TOOL_BIN_DIR:-$HOME/.local/bin}"

@@ -53,8 +53,8 @@ This installs [uv](https://docs.astral.sh/uv/) if it isn't already there, then p
 Rather not pipe a script into your shell? These are equivalent:
 
 ```bash
-uv tool install tako-shell     # if you have uv
-pipx install tako-shell        # if you have pipx
+uv tool install takopy     # if you have uv
+pipx install takopy        # if you have pipx
 ```
 
 Re-running any of the three upgrades an existing install.
@@ -456,13 +456,13 @@ Covers the pure logic: JQL building (`test_list_query.py` — shorthand/comparis
 
 ## Releasing
 
-Published to PyPI as [`tako-shell`](https://pypi.org/project/tako-shell/) (the command stays `tako`; the plain `tako` name was already taken). No API token is stored anywhere — [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/) authenticates the workflow over OIDC.
+Published to PyPI as [`takopy`](https://pypi.org/project/takopy/) (the command stays `tako`; the plain `tako` name was already taken). No API token is stored anywhere — [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/) authenticates the workflow over OIDC.
 
 One-time setup on PyPI → *Publishing* → *Add a new pending publisher*:
 
 | Field | Value |
 |---|---|
-| PyPI project name | `tako-shell` |
+| PyPI project name | `takopy` |
 | Owner | `nonasking` |
 | Repository | `tako` |
 | Workflow name | `release.yml` |
@@ -479,7 +479,7 @@ git tag v0.1.0 && git push origin v0.1.0
 
 ## Troubleshooting
 
-- `tako: command not found` — the install directory isn't on your PATH. Run `uv tool update-shell` and open a new terminal. As a fallback, `uv tool run --from tako-shell tako ...` (or `python -m tako ...` in a source checkout) behaves identically.
+- `tako: command not found` — the install directory isn't on your PATH. Run `uv tool update-shell` and open a new terminal. As a fallback, `uv tool run --from takopy tako ...` (or `python -m tako ...` in a source checkout) behaves identically.
 - `설정 파일이 없습니다` (no config file) — `tako init`. For a different path, use the `TAKO_CONFIG_PATH` environment variable.
 - `creds 없음` (no creds) — same as above.
 - `허용 안 된 이슈 타입` (disallowed issue type) — add it under `issue_types` in `~/.config/tako/config.yaml`.
