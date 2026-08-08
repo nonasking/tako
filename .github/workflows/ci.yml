@@ -37,3 +37,11 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
           shellcheck get-tako.sh install.sh
+
+      - name: release.yml 의 버전 추출이 동작하는지
+        # 이 로직은 태그를 밀 때만 실행돼 PR 에서 검증되지 않는다 — 여기서 대신 돌린다.
+        # (실제로 tomllib 을 3.10 잡에서 쓰다 v0.1.0 릴리스가 verify 에서 죽었다.)
+        run: |
+          VERSION=$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' pyproject.toml | head -1)
+          echo "pyproject version = '$VERSION'"
+          test -n "$VERSION" || { echo "::error::version 추출 실패"; exit 1; }

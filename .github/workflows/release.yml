@@ -22,9 +22,15 @@ jobs:
 
       - name: tag 와 pyproject 버전이 일치하는지 확인
         run: |
+          # tomllib 은 3.11+ 라 여기서 못 쓴다 — 이 잡은 최소 지원 버전(3.10)에서
+          # 테스트까지 돌리는 것이 목적이므로, 파서 대신 sed 로 읽는다.
           TAG="${GITHUB_REF_NAME#v}"
-          VERSION=$(python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          VERSION=$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' pyproject.toml | head -1)
           echo "tag=$TAG  pyproject=$VERSION"
+          if [ -z "$VERSION" ]; then
+            echo "::error::pyproject.toml 에서 version 을 읽지 못했습니다."
+            exit 1
+          fi
           if [ "$TAG" != "$VERSION" ]; then
             echo "::error::태그($TAG)와 pyproject.toml 버전($VERSION)이 다릅니다."
             exit 1
