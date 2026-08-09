@@ -1,0 +1,22 @@
+version: 2
+
+# 의존성이나 액션에 새 버전이 나오면 PR 이 자동으로 열리고 ci.yml 이 그 위에서 돈다.
+# maintenance.yml 이 "이미 깨졌다"를 알려준다면, 이쪽은 "곧 깨질 수 있다"를 알려준다.
+
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore"
