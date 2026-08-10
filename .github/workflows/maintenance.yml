@@ -1,0 +1,112 @@
+name: maintenance
+
+# ci.yml 은 코드를 바꿀 때만 돈다. 그래서 "내 코드는 그대로인데 바깥이 바뀌어서
+# 깨진" 경우를 영원히 잡지 못한다 — 의존성 새 릴리스, 파이썬 새 버전, 깨진 배포본.
+#
+# 이 워크플로가 그 역할을 한다. 사용자가 0 명이어도 매주 대신 깨져 준다.
+
+on:
+  schedule:
+    - cron: "0 0 * * 1"   # 매주 월요일 09:00 KST
+  workflow_dispatch:      # 필요할 때 수동 실행
+
+jobs:
+  fresh-deps:
+    # 의존성을 매번 새로 해석해 돌린다. 새 버전이 나와서 깨지면 여기서 걸린다.
+    name: fresh deps (${{ matrix.os }}, py${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.10", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: install (해석 캐시 없이)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade --no-cache-dir -e .
+
+      - name: 실제로 해석된 버전 기록
+        run: python -m pip list
+
+      - name: run tests
+        run: python -m unittest discover -s tests -t .
+
+  python-canary:
+    # 다음 파이썬에서 깨지는지 미리 본다. 깨져도 워크플로는 실패시키지 않는다 —
+    # 아직 지원 대상이 아니므로 알림만 받으면 된다.
+    name: python canary (3.14)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - run: python -m unittest discover -s tests -t .
+
+  install-smoke:
+    # ci.yml 은 저장소의 코드를 시험한다. 이 잡은 **PyPI 에 실제로 올라간 것**을
+    # 시험한다. 메타데이터가 깨지거나 의존성이 yank 되면 코드는 멀쩡한데 설치만
+    # 안 되는 상태가 되는데, 그건 여기서만 잡힌다.
+    name: install from PyPI (${{ matrix.installer }})
+    strategy:
+      fail-fast: false
+      matrix:
+        installer: [pip, uv]
+    runs-on: ubuntu-latest
+    steps:
+      - name: install via ${{ matrix.installer }}
+        run: |
+          if [ "${{ matrix.installer }}" = "uv" ]; then
+            curl -LsSf https://astral.sh/uv/install.sh | sh
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+            "$HOME/.local/bin/uv" tool install --force takopy
+          else
+            python -m pip install --upgrade pip
+            python -m pip install --force-reinstall takopy
+          fi
+
+      - name: 설치된 tako 가 동작하는지
+        run: |
+          tako --version
+          tako --help > /dev/null
+
+      - name: 동봉 리소스가 실제로 딸려 왔는지
+        # 슬래시 커맨드와 기본 가이드는 package-data 로 들어간다 —
+        # 패키징이 어긋나면 설치는 되는데 이 둘만 조용히 사라진다.
+        run: |
+          test "$(tako slash list | wc -l)" -eq 7
+          tako guide show > /dev/null
+          TAKO_COMMANDS_DIR=/tmp/cmds tako slash install
+          test -f /tmp/cmds/tako.md
+
+      - name: 설정이 없을 때 비TTY 에서 멈추지 않는지
+        # 자동화가 입력을 기다리며 매달리면 안 된다. exit 2 로 즉시 끝나야 한다.
+        run: |
+          set +e
+          TAKO_CONFIG_PATH=/tmp/nope.yaml timeout 20 tako list < /dev/null > /dev/null 2>&1
+          code=$?
+          set -e
+          echo "exit=$code (기대: 2)"
+          test "$code" -eq 2
+
+  installer-script:
+    # README 의 원라인이 가리키는 URL 이 살아 있고 실행 가능한 스크립트를 주는지.
+    # 저장소 이름 변경·브랜치 정리로 조용히 깨질 수 있는 지점이다.
+    name: one-line installer URL
+    runs-on: ubuntu-latest
+    steps:
+      - name: URL 이 스크립트를 서빙하는지
+        run: |
+          URL="https://github.com/nonasking/tako/raw/develop/get-tako.sh"
+          curl -fsSL "$URL" -o /tmp/get-tako.sh
+          head -1 /tmp/get-tako.sh | grep -q '^#!/usr/bin/env bash'
+          bash -n /tmp/get-tako.sh
+          echo "OK — $URL"

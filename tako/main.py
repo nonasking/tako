@@ -345,7 +345,35 @@ def _cmd_fields_detect(args: argparse.Namespace, cfg) -> int:
     return 0
 
 
+ISSUE_URL = "https://github.com/nonasking/tako/issues"
+
+
 def run(argv: list[str] | None = None) -> int:
+    """진입점 — 예상 못 한 예외를 제보 가능한 형태로 바꿔서 내보낸다.
+
+    사용자가 0 명인 동안에는 스택트레이스가 아무 데도 도착하지 않는다.
+    버전과 제보 경로를 함께 찍어야 리포트가 실제로 온다.
+    """
+    try:
+        return _dispatch(argv)
+    except KeyboardInterrupt:
+        sys.stderr.write("\n중단됨.\n")
+        return 130
+    except BrokenPipeError:
+        # `tako list | head` 처럼 뒤쪽이 먼저 닫힌 경우 — 오류가 아니다.
+        return 0
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        py = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+        sys.stderr.write(
+            f"\n예상하지 못한 오류다 (tako {__version__}, python {py}).\n"
+            f"위 내용을 그대로 붙여 제보해 주면 고칠 수 있다:\n  {ISSUE_URL}\n"
+        )
+        return 1
+
+
+def _dispatch(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
     if args.command == "init":
         return _cmd_init(args)

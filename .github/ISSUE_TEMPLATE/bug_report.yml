@@ -1,0 +1,82 @@
+name: Bug report
+description: Something went wrong — a crash, a wrong result, or a step that didn't work.
+labels: [bug]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. The version and the exact command matter more than
+        anything else here — with those two, most bugs are reproducible in one try.
+
+        한국어로 적으셔도 됩니다.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `tako --version`
+      placeholder: tako 0.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install it?
+      options:
+        - One-line installer (curl ... | bash)
+        - uv tool install takopy
+        - pipx install takopy
+        - pip install takopy
+        - From source (git clone + pip install -e .)
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: macOS 15.5 (Apple Silicon) / Ubuntu 24.04
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Command you ran
+      description: >
+        Please redact your Jira site, project keys, and anything else sensitive.
+        Never paste your API token.
+      render: shell
+      placeholder: tako new --project ABC --issue-type Task --summary "..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: Paste the full output, including any traceback.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: >
+        Does it happen every time, or only sometimes? Did it work before?
+        If it's a config problem, the relevant part of `~/.config/tako/config.yaml`
+        helps — with the site domain redacted.
+    validations:
+      required: false
