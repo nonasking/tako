@@ -14,7 +14,7 @@ jobs:
         python: ["3.10", "3.13"]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v5
         with:
@@ -30,7 +30,7 @@ jobs:
     # get-tako.sh 는 사용자가 가장 먼저 실행하는 파일 — 문법 오류가 나가면 안 된다.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: shell syntax check
         run: bash -n get-tako.sh
       - name: shellcheck
