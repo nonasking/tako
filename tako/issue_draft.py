@@ -58,7 +58,7 @@ class IssueDraft:
     # 페이로드에는 안 들어감. assignee 가 accountId 라 사용자가 못 알아보는 문제 완화.
     assignee_label: str | None = None
     # 보고자. 미지정이면 Jira 가 인증 사용자를 자동으로 넣는다 — 그게 대부분의 정상 경로다.
-    # 값을 실으려면 프로젝트에 MODIFY_REPORTER 권한이 있어야 한다 (main._ensure_can_modify_reporter).
+    # 값을 실으려면 프로젝트에 MODIFY_REPORTER 권한이 있어야 한다 (cmd_new._can_modify_reporter).
     reporter: str | None = None
     reporter_label: str | None = None
     story_points: int | None = None
@@ -77,6 +77,10 @@ class IssueDraft:
         labels_raw = data.get("labels") or []
         if not isinstance(labels_raw, list) or not all(isinstance(x, str) for x in labels_raw):
             raise DraftError("labels 는 문자열 리스트여야 함.")
+        for label in labels_raw:
+            if any(ch.isspace() for ch in label.strip()):
+                # Jira 는 공백 포함 라벨을 400 으로 거부 — 로컬에서 미리 걸러 왕복을 아낀다.
+                raise DraftError(f"라벨에 공백 불가: {label!r} (예: 'needs-review')")
 
         parent = data.get("parent_epic")
         if parent is not None and not isinstance(parent, str):

@@ -77,8 +77,25 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="연결할 티켓 KEY[:TYPE] (반복 가능, TYPE 생략 시 'Relates'). 예: --link WL-100 --link 'WL-200:Blocks'",
     )
     new_parser.add_argument("--yes", "-y", action="store_true", help="확인 없이 바로 생성")
+    new_parser.add_argument(
+        "--edit",
+        "-e",
+        action="store_true",
+        help="질문 릴레이 대신 처음부터 에디터로 초안 작성 (TTY 전용). 에디터는 config editor → $EDITOR → $VISUAL → vi 순",
+    )
+    new_parser.add_argument(
+        "--draft-file",
+        dest="draft_file",
+        help="초안 파일(YAML frontmatter + 마크다운 본문)에서 내용 읽기. --summary 등 내용 인자와 병용 불가, --issue-type 만 예외",
+    )
 
-    sub.add_parser("preview", help="stdin JSON → 미리보기 stdout")
+    preview_parser = sub.add_parser("preview", help="stdin JSON → 미리보기 stdout")
+    preview_parser.add_argument(
+        "--draft-file",
+        dest="draft_file",
+        help="stdin JSON 대신 초안 파일에서 읽기",
+    )
+    preview_parser.add_argument("--issue-type", dest="issue_type", help="초안 파일 미리보기 시 이슈 유형 (생략 시 config 기본값)")
     sub.add_parser("build", help="stdin JSON → 페이로드 JSON stdout")
     sub.add_parser("interactive", help="TTY 인터랙티브 → 페이로드 JSON stdout")
 
@@ -399,7 +416,7 @@ def _dispatch(argv: list[str] | None = None) -> int:
         case "retype":
             return cmd_retype(args, cfg)
         case "preview":
-            return cmd_preview(cfg)
+            return cmd_preview(args, cfg)
         case "build":
             return cmd_build(cfg)
         case "interactive":
