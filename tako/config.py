@@ -50,6 +50,9 @@ class TakoConfig:
     allowed_issue_types: tuple[str, ...]
     auto_fill: AutoFillRules
     epic_aliases: dict[str, str] = field(default_factory=dict)
+    # 초안 파일 편집(tako new 의 e / --edit)에 쓸 에디터 명령.
+    # 'code --wait' 처럼 인자 포함 가능. 없으면 $EDITOR → $VISUAL → vi 순.
+    editor: str | None = None
 
     def resolve_epic(self, alias_or_key: str | None) -> str | None:
         if not alias_or_key:
@@ -129,6 +132,13 @@ def _build_config(raw: dict[str, Any]) -> TakoConfig:
         labels=bool(auto_fill_raw.get("labels", False)),
     )
 
+    editor_raw = raw.get("editor")
+    editor: str | None = None
+    if editor_raw is not None:
+        if not isinstance(editor_raw, str) or not editor_raw.strip():
+            raise ConfigError("editor 가 문자열이 아니거나 비었음.")
+        editor = editor_raw.strip()
+
     epic_aliases_raw = raw.get("epic_aliases") or {}
     if not isinstance(epic_aliases_raw, dict):
         raise ConfigError("epic_aliases 가 매핑이 아님.")
@@ -150,6 +160,7 @@ def _build_config(raw: dict[str, Any]) -> TakoConfig:
         allowed_issue_types=allowed,
         auto_fill=auto_fill,
         epic_aliases=epic_aliases,
+        editor=editor,
     )
 
 

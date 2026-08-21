@@ -116,10 +116,16 @@ tako new
 #  Story points (integer, Enter for none):
 #  Due date YYYY-MM-DD (Enter for none):
 #  Tickets to link (KEY[:TYPE], comma-separated, Enter for none):
-#  → preview → create in Jira? (Y/n)
+#  → preview → create in Jira? (Y/n/e=edit)
 
 # pre-specify some of it
 tako new --project WL --issue-type 기능변경 --assignee me
+
+# skip the question relay — write the draft in your editor from the start
+tako new --edit
+
+# create from a draft file (YAML frontmatter + markdown body)
+tako new --draft-file my-draft.md --issue-type 기능변경
 
 # create a sub-task — parent key + the site's sub-task issue-type name
 tako new --project WL --issue-type 하위작업 --parent WL-9058 \
@@ -173,7 +179,9 @@ tako fields set story_points customfield_10016
 
 `tako fields detect <name>` without `--save` only prints the result and doesn't touch config (auto-writing config could lose comments). Supported names: `story_points` (v1.x).
 
-Flow: input → preview → Y/n → REST → key + links. No Claude Code needed.
+Flow: input → preview → Y/n/e → REST → key + links. No Claude Code needed.
+
+At the preview confirmation, answering `e` opens the draft in your editor as a file — YAML frontmatter for the fields, markdown body below — so multi-line fixes don't mean retyping everything. Save and close to get a fresh preview; broken edits reopen the same file instead of losing your work. The frontmatter accepts `project, summary, parent, labels, assignee, reporter, story_points, duedate, links`. The issue type is deliberately *not* editable there (it can't be changed after creation either) — pass it via `--issue-type`. The editor is resolved as config `editor:` → `$EDITOR` → `$VISUAL` → `vi`; commands with arguments work (`editor: code --wait`).
 
 Right after creation, the ticket URL is auto-copied to the system clipboard (macOS `pbcopy` / Linux `xclip` or `xsel`). Turn it off with `jira.auto_copy_url: false` in config. In environments without those tools it's silently skipped — creation itself is unaffected.
 
