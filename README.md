@@ -289,13 +289,19 @@ tako list --assignee me --json
 # to Excel (UTF-8 BOM CSV — opens in Excel on double-click)
 tako list --assignee me --csv --output my-issues.csv
 tako list --assignee me --csv > my-issues.csv   # stdout redirect also works
+
+# open in the browser (after the table is printed)
+tako list --assignee me --open              # one tab: the same JQL on Jira's issue search page
+tako list --parent WL-9200 --open-each      # one tab per ticket (asks first above 20)
 ```
+
+`--open` is the light option — a single tab showing the same list inside Jira's own UI, with the filter still editable there. `--open-each` opens every result as its own tab, which is handy for reviewing a handful one by one; past 20 results it asks for confirmation in a TTY and refuses otherwise, to keep `--all` from opening hundreds of tabs. Both run only after the output is written and never change the exit code; on a platform where the browser can't be opened (Windows), the URLs are printed to stderr instead.
 
 `--output / -o` never overwrites. If the file already exists, a KST timestamp is inserted before the extension
 (`my-issues.csv` → `my-issues-2026-08-03_142530.csv`) and the path actually written is printed to stderr.
 Missing parent directories are created. Note that a shell redirect (`>`) is your shell's job, so it still truncates.
 
-Supported args: `--assignee` (me / email / accountId), `--project` (repeatable, query multiple projects at once), `--status` (repeatable), `--type` (repeatable), `--parent`, `--label` (repeatable), `--updated` / `--created` (`7d`/`1w`/`YYYY-MM-DD` / comparisons like `<=YYYY-MM-DD` / `YYYY-MM-DD..YYYY-MM-DD` range), `--due` (`overdue` / `none` / `set` / `YYYY-MM-DD` / `<=YYYY-MM-DD` etc. / range), `--sp` (integer / `>=N` / `<=N` / `none` / `set`), `--query`, `--jql`, `--limit` (default 20 — caps total results, auto-paging past 100), `--all` (fetch everything, ignores `--limit`), `--json`, `--csv`, `--output / -o`, `--wizard / -i` (interactive input).
+Supported args: `--assignee` (me / email / accountId), `--project` (repeatable, query multiple projects at once), `--status` (repeatable), `--type` (repeatable), `--parent`, `--label` (repeatable), `--updated` / `--created` (`7d`/`1w`/`YYYY-MM-DD` / comparisons like `<=YYYY-MM-DD` / `YYYY-MM-DD..YYYY-MM-DD` range), `--due` (`overdue` / `none` / `set` / `YYYY-MM-DD` / `<=YYYY-MM-DD` etc. / range), `--sp` (integer / `>=N` / `<=N` / `none` / `set`), `--query`, `--jql`, `--limit` (default 20 — caps total results, auto-paging past 100), `--all` (fetch everything, ignores `--limit`), `--json`, `--csv`, `--output / -o`, `--open` (Jira search page in one tab), `--open-each` (one tab per ticket, confirm above 20), `--wizard / -i` (interactive input).
 
 The *range* form for `--updated` / `--created` / `--due` is `YYYY-MM-DD..YYYY-MM-DD` or `YYYY-MM-DD~YYYY-MM-DD` (alias), both endpoints inclusive. It can't be mixed with shorthand (`7d`). If the start is later than the end, it's rejected.
 

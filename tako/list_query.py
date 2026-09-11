@@ -19,6 +19,7 @@ _DATE_WITH_OP = re.compile(r"^(<=|>=|<|>)\s*(\d{4}-\d{2}-\d{2})$")
 
 
 DEFAULT_LIST_LIMIT = 20
+OPEN_EACH_CAP = 20  # --open-each 가 확인 없이 여는 탭 수 상한. DEFAULT_LIST_LIMIT 과 값만 같을 뿐 무관
 
 
 @dataclass
@@ -49,6 +50,8 @@ class ListOutputOpts:
     as_csv: bool = False
     as_json: bool = False
     output: str | None = None
+    open_search: bool = False  # --open: JQL 검색 페이지 한 탭
+    open_each: bool = False  # --open-each: 티켓마다 탭 하나
 
 
 class QueryError(Exception):

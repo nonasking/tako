@@ -13,11 +13,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .browser import open_urls
 from .cmd_common import build_client, stamp_kst_str
 from .config import TakoConfig
 from .jira_client import JiraApiError, JiraSiteClient
-from .list_output import issues_to_csv, render_list_table
-from .list_query import DEFAULT_LIST_LIMIT, ListFilters, ListOutputOpts, QueryError, build_jql
+from .list_output import browse_urls, issues_to_csv, render_list_table, search_page_url
+from .list_query import DEFAULT_LIST_LIMIT, OPEN_EACH_CAP, ListFilters, ListOutputOpts, QueryError, build_jql
 from .prompts import ask_text, confirm, stdin_is_tty
 
 
@@ -164,6 +165,8 @@ def _collect_list_filters_interactively(
         as_csv=as_csv,
         as_json=as_json,
         output=output,
+        open_search=args.open_search,
+        open_each=args.open_each,
     )
     return filters, opts
 
@@ -209,6 +212,10 @@ def _filters_to_shell_hint(filters: ListFilters, opts: ListOutputOpts) -> str:
         parts.append("--json")
     if opts.output:
         parts += ["-o", shlex.quote(opts.output)]
+    if opts.open_search:
+        parts.append("--open")
+    if opts.open_each:
+        parts.append("--open-each")
     return " ".join(parts)
 
 
@@ -284,6 +291,8 @@ def cmd_list(args: Any, cfg: TakoConfig) -> int:
             as_csv=args.as_csv,
             as_json=args.as_json,
             output=args.output,
+            open_search=args.open_search,
+            open_each=args.open_each,
         )
 
     sp_field_id = cfg.jira.custom_fields.get("story_points")
@@ -314,6 +323,9 @@ def cmd_list(args: Any, cfg: TakoConfig) -> int:
         return 2
 
     rc = _output_results(issues, has_more, jql=jql, site=cfg.jira.site, sp_field_id=sp_field_id, opts=opts)
+    if rc == 0 and (opts.open_search or opts.open_each):
+        # 브라우저는 표를 다 찍은 뒤 부수효과로만. 실패해도 종료 코드는 건드리지 않는다.
+        _open_in_browser(issues, jql=jql, site=cfg.jira.site, opts=opts)
     if args.wizard:
         sys.stderr.write(f"\n[힌트] 같은 조회 다시 쓰려면:\n  {_filters_to_shell_hint(filters, opts)}\n")
     return rc
@@ -354,6 +366,44 @@ def _output_results(
     print(render_list_table(issues, sp_field_id=sp_field_id))
     sys.stderr.write(f"\n({len(issues)} 건{', 더 있음 — --all 로 전체 / --limit 늘리기' if has_more else ''})\n")
     return 0
+
+
+def _open_in_browser(
+    issues: list[dict[str, Any]], *, jql: str, site: str, opts: ListOutputOpts
+) -> None:
+    """--open / --open-each 처리. 탭 폭발은 여기서 막는다.
+
+    --open-each 는 OPEN_EACH_CAP 을 넘으면 TTY 에선 한 번 묻고, 비TTY 에선 열지 않는다.
+    브라우저를 못 여는 환경(Windows 등)이면 URL 을 stderr 에 남겨 직접 열게 한다.
+    """
+    urls: list[str] = []
+    if opts.open_search:
+        urls.append(search_page_url(site, jql))
+    if opts.open_each:
+        each = browse_urls(issues, site)
+        if not each:
+            sys.stderr.write("[브라우저] 열 티켓이 없음 — --open-each 건너뜀\n")
+        elif len(each) <= OPEN_EACH_CAP:
+            urls.extend(each)
+        elif not stdin_is_tty():
+            sys.stderr.write(
+                f"[브라우저] {len(each)} 건은 {OPEN_EACH_CAP} 건 상한을 넘어 열지 않음"
+                f" — --limit 을 줄이거나 --open 으로 검색 페이지 한 탭을 권장\n"
+            )
+        elif confirm(f"티켓 {len(each)} 건을 탭으로 전부 열까요?", default=False):
+            urls.extend(each)
+        else:
+            sys.stderr.write("[브라우저] 취소.\n")
+    if not urls:
+        return
+
+    opened = open_urls(urls)
+    if opened == len(urls):
+        sys.stderr.write(f"[브라우저] 탭 {opened} 개 열음\n")
+        return
+    sys.stderr.write(f"[브라우저] 열지 못함 ({opened}/{len(urls)}) — 아래 URL 직접 열기\n")
+    for u in urls:
+        sys.stderr.write(f"  {u}\n")
 
 
 def _reserve_output_path(output_path: str) -> Path:
