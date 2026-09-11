@@ -3,12 +3,15 @@
 - text: 사람 친화 표 (render_list_table — 한글 전각 폭 기준 열 정렬)
 - csv:  Excel 친화 CSV (UTF-8 BOM, 한국어 깨짐 방지)
 - json: 원본 응답 (main 쪽에서 그대로 dump)
+- url:  browse / 검색 페이지 주소 조립 (CSV url 열과 --open 계열이 같은 규칙을 쓴다)
 
 행 추출(issue_cells)은 표·CSV 공용 — 값 없는 칸은 빈 문자열로 두고,
 "(미할당)" 같은 표시용 대체 문구는 각 렌더러가 얹는다.
 """
 
 from __future__ import annotations
+
+from urllib.parse import quote
 
 import csv
 import io
@@ -64,8 +67,7 @@ def issues_to_csv(
     writer.writerow(columns)
     for it in issues:
         cells = issue_cells(it, sp_field_id=sp_field_id)
-        key = cells["key"]
-        cells["url"] = f"https://{site}/browse/{key}" if key else ""
+        cells["url"] = browse_url(site, cells["key"]) if cells["key"] else ""
         writer.writerow(tuple(cells[c] for c in columns))
     return buf.getvalue()
 
@@ -115,3 +117,17 @@ def render_list_table(issues: list[dict[str, Any]], *, sp_field_id: str | None =
 
     divider = tuple("-" * (w - 2) for w in widths)
     return "\n".join([line(header), line(divider)] + [line(r) for r in rows])
+
+
+def browse_url(site: str, key: str) -> str:
+    return f"https://{site}/browse/{key}"
+
+
+def browse_urls(issues: list[dict[str, Any]], site: str) -> list[str]:
+    """결과 순서 그대로 browse URL 목록. 키 없는 항목은 건너뛴다."""
+    return [browse_url(site, key) for key in (it.get("key") for it in issues) if key]
+
+
+def search_page_url(site: str, jql: str) -> str:
+    """Jira 이슈 검색 화면 URL. JQL 은 그대로 넣으면 &, = 가 깨지므로 전부 인코딩."""
+    return f"https://{site}/issues/?jql={quote(jql, safe='')}"

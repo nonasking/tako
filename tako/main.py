@@ -34,7 +34,7 @@ from .guide import (
     write_default_guide,
 )
 from .jira_client import JiraApiError
-from .list_query import DEFAULT_LIST_LIMIT
+from .list_query import DEFAULT_LIST_LIMIT, OPEN_EACH_CAP
 from .prompts import ask_text, stdin_is_tty
 from .slash import SlashError, install_commands, packaged_commands, resolve_commands_dir
 
@@ -135,6 +135,18 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "-o",
         "--output",
         help="파일에 저장 (생략 시 stdout). 예: --csv -o tako-list.csv",
+    )
+    list_parser.add_argument(
+        "--open",
+        dest="open_search",
+        action="store_true",
+        help="같은 JQL 의 Jira 검색 페이지를 브라우저 탭 하나로 연다",
+    )
+    list_parser.add_argument(
+        "--open-each",
+        dest="open_each",
+        action="store_true",
+        help=f"결과 티켓을 브라우저 탭 하나씩 연다 ({OPEN_EACH_CAP} 건 초과면 확인 필요)",
     )
     list_parser.add_argument(
         "-i",
