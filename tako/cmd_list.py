@@ -7,7 +7,9 @@ limit 의미론:
 
 from __future__ import annotations
 
+import dataclasses
 import json
+import re
 import shlex
 import sys
 from pathlib import Path
@@ -20,6 +22,9 @@ from .jira_client import JiraApiError, JiraSiteClient
 from .list_output import browse_urls, issues_to_csv, render_list_table, search_page_url
 from .list_query import DEFAULT_LIST_LIMIT, OPEN_EACH_CAP, ListFilters, ListOutputOpts, QueryError, build_jql
 from .prompts import ask_text, confirm, stdin_is_tty
+
+
+_ROW_RANGE = re.compile(r"^(\d+)-(\d+)$")  # 표 행 번호 범위, 예: 5-7
 
 
 _ALL_KEYWORDS = {"전체", "all", "*"}
@@ -322,10 +327,17 @@ def cmd_list(args: Any, cfg: TakoConfig) -> int:
         sys.stderr.write(f"[jira] {exc}\n")
         return 2
 
-    rc = _output_results(issues, has_more, jql=jql, site=cfg.jira.site, sp_field_id=sp_field_id, opts=opts)
+    # 위저드 + 기본 표 출력이면 행 번호를 붙여 뒤이은 "브라우저로 열기" 프롬프트에서 고르게 한다.
+    numbered = bool(args.wizard) and not (opts.as_csv or opts.as_json)
+    rc = _output_results(
+        issues, has_more, jql=jql, site=cfg.jira.site, sp_field_id=sp_field_id, opts=opts, numbered=numbered
+    )
     if rc == 0 and (opts.open_search or opts.open_each):
         # 브라우저는 표를 다 찍은 뒤 부수효과로만. 실패해도 종료 코드는 건드리지 않는다.
         _open_in_browser(issues, jql=jql, site=cfg.jira.site, opts=opts)
+    elif rc == 0 and numbered and issues:
+        # 인자로 --open/--open-each 를 이미 줬으면 그걸 따르고 묻지 않는다.
+        opts = _prompt_open_targets(issues, jql=jql, site=cfg.jira.site, opts=opts)
     if args.wizard:
         sys.stderr.write(f"\n[힌트] 같은 조회 다시 쓰려면:\n  {_filters_to_shell_hint(filters, opts)}\n")
     return rc
@@ -339,6 +351,7 @@ def _output_results(
     site: str,
     sp_field_id: str | None,
     opts: ListOutputOpts,
+    numbered: bool = False,
 ) -> int:
     if opts.as_json:
         payload = json.dumps(
@@ -363,15 +376,93 @@ def _output_results(
     if not issues:
         sys.stderr.write("(결과 없음)\n")
         return 0
-    print(render_list_table(issues, sp_field_id=sp_field_id))
+    print(render_list_table(issues, sp_field_id=sp_field_id, numbered=numbered))
     sys.stderr.write(f"\n({len(issues)} 건{', 더 있음 — --all 로 전체 / --limit 늘리기' if has_more else ''})\n")
     return 0
 
 
+_OPEN_PROMPT = "브라우저로 열기 (Enter=끝 / s=검색 페이지 / a=전부 / 번호·키 예: 1,3 5-7 WL-12)"
+
+
+def _prompt_open_targets(
+    issues: list[dict[str, Any]], *, jql: str, site: str, opts: ListOutputOpts
+) -> ListOutputOpts:
+    """위저드 표 출력 뒤 "무엇을 브라우저로 열까" 를 반복해서 묻는다. Enter 로 끝.
+
+    결과를 *보고 나서* 고르는 게 목적이라 앞단 질문이 아니라 여기에 둔다. 's'·'a' 는
+    --open / --open-each 와 같은 동작이므로 _open_in_browser 를 그대로 태우고 (탭 상한
+    확인 포함), 번호·키 부분 선택은 셸 인자로 재현할 수 없으니 힌트에 반영하지 않는다.
+    반환값은 힌트용 opts — s/a 로 *실제로 연* 경우에만 플래그가 켜진다 (상한 확인에서
+    취소했는데 힌트가 탭 30개짜리 명령을 권하면 안 되니까).
+
+    매번 새 ListOutputOpts 를 만드는 건 의도적이다. 누적된 opts 를 replace 로 재사용하면
+    직전 루프의 open_each 가 딸려가 's' 를 눌렀는데 전 티켓이 같이 열린다.
+    """
+    while True:
+        raw = _ask_optional(_OPEN_PROMPT)
+        if not raw:
+            return opts
+        lowered = raw.lower()
+        if lowered == "s":
+            if _open_in_browser(issues, jql=jql, site=site, opts=ListOutputOpts(open_search=True)):
+                opts = dataclasses.replace(opts, open_search=True)
+            continue
+        if lowered == "a":
+            if _open_in_browser(issues, jql=jql, site=site, opts=ListOutputOpts(open_each=True)):
+                opts = dataclasses.replace(opts, open_each=True)
+            continue
+        try:
+            picked = _pick_issues(raw, issues)
+        except ValueError as exc:
+            sys.stderr.write(f"{exc}\n")
+            continue
+        _open_in_browser(picked, jql=jql, site=site, opts=ListOutputOpts(open_each=True))
+
+
+def _pick_issues(raw: str, issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """'1,3 5-7 WL-12' 같은 입력을 결과 목록의 이슈로 바꾼다. 순서는 입력 순, 중복은 한 번만.
+
+    번호는 표의 행 번호(1부터), 키는 대소문자 구분 없이 결과 안에서 찾는다.
+    범위를 벗어나거나 결과에 없는 항목이 하나라도 있으면 ValueError — 일부만 열고
+    나머지를 조용히 버리면 사용자가 눈치채기 어렵다.
+    """
+    by_key = {str(it.get("key", "")).upper(): it for it in issues if it.get("key")}
+    picked: list[dict[str, Any]] = []
+    seen: set[int] = set()
+
+    def add(it: dict[str, Any]) -> None:
+        if id(it) not in seen:
+            seen.add(id(it))
+            picked.append(it)
+
+    for token in raw.replace(",", " ").split():
+        m = _ROW_RANGE.match(token)
+        if m:
+            lo, hi = int(m.group(1)), int(m.group(2))
+            if lo < 1 or hi > len(issues) or lo > hi:
+                raise ValueError(f"범위가 표를 벗어남: {token} (1-{len(issues)}).")
+            for n in range(lo, hi + 1):
+                add(issues[n - 1])
+            continue
+        if token.isdigit():
+            n = int(token)
+            if not 1 <= n <= len(issues):
+                raise ValueError(f"번호가 표를 벗어남: {token} (1-{len(issues)}).")
+            add(issues[n - 1])
+            continue
+        it = by_key.get(token.upper())
+        if it is None:
+            raise ValueError(f"결과에 없음: {token}.")
+        add(it)
+    if not picked:
+        raise ValueError("고른 항목 없음.")
+    return picked
+
+
 def _open_in_browser(
     issues: list[dict[str, Any]], *, jql: str, site: str, opts: ListOutputOpts
-) -> None:
-    """--open / --open-each 처리. 탭 폭발은 여기서 막는다.
+) -> int:
+    """--open / --open-each 처리. 탭 폭발은 여기서 막는다. 실제로 연 탭 수를 돌려준다.
 
     --open-each 는 OPEN_EACH_CAP 을 넘으면 TTY 에선 한 번 묻고, 비TTY 에선 열지 않는다.
     브라우저를 못 여는 환경(Windows 등)이면 URL 을 stderr 에 남겨 직접 열게 한다.
@@ -382,7 +473,7 @@ def _open_in_browser(
     if opts.open_each:
         each = browse_urls(issues, site)
         if not each:
-            sys.stderr.write("[브라우저] 열 티켓이 없음 — --open-each 건너뜀\n")
+            sys.stderr.write("[브라우저] 열 수 있는 링크가 없음 — 건너뜀\n")
         elif len(each) <= OPEN_EACH_CAP:
             urls.extend(each)
         elif not stdin_is_tty():
@@ -395,15 +486,16 @@ def _open_in_browser(
         else:
             sys.stderr.write("[브라우저] 취소.\n")
     if not urls:
-        return
+        return 0
 
     opened = open_urls(urls)
     if opened == len(urls):
         sys.stderr.write(f"[브라우저] 탭 {opened} 개 열음\n")
-        return
+        return opened
     sys.stderr.write(f"[브라우저] 열지 못함 ({opened}/{len(urls)}) — 아래 URL 직접 열기\n")
     for u in urls:
         sys.stderr.write(f"  {u}\n")
+    return opened
 
 
 def _reserve_output_path(output_path: str) -> Path:

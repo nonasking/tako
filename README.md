@@ -313,6 +313,17 @@ tako list --due 2026-06-01..2026-06-30         # due in June
 
 When the filter gets long for one line, use `tako list --wizard` (or `-i`) — it asks per item and skips blank input. It composes with CLI args (e.g. `tako list -i --assignee me` skips the assignee prompt and asks the rest). Right after the output, it prints a *one-line shell command* that reproduces the same query to stderr as a hint, so you can save it as an alias if you like it.
 
+In wizard mode the table gets a row-number column, and once it's printed a *browser prompt* follows so you pick what to open after seeing the results — no CSV round-trip needed:
+
+```
+브라우저로 열기 (Enter=끝 / s=검색 페이지 / a=전부 / 번호·키 예: 1,3 5-7 WL-12): 1 3
+[브라우저] 탭 2 개 열음
+브라우저로 열기 (...): a
+티켓 30 건을 탭으로 전부 열까요? (y/N): y
+```
+
+`s` opens the search page (same as `--open`), `a` opens every result (same as `--open-each`, with the same confirmation above 20), and row numbers, ranges or issue keys open just those. The prompt repeats until you press Enter. It only appears for the default table output without `--open`/`--open-each` on the command line; if you chose `s` or `a`, the shell hint at the end includes the matching flag.
+
 **`전체` / `all` / `*` keyword** — usable on any filter (both interactive and CLI):
 
 - Status / type / label / assignee: `전체` (all) = same as blank input (that condition isn't applied).
