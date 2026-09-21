@@ -99,6 +99,15 @@ class RenderTableTest(unittest.TestCase):
         starts = [display_width(l[: l.index("2026-0")]) for l in lines[2:]]
         self.assertEqual(starts[0], starts[1])
 
+    def test_numbered_prepends_row_index(self) -> None:
+        lines = render_list_table([_issue(), _issue()], numbered=True).splitlines()
+        self.assertTrue(lines[0].startswith("#"))
+        self.assertTrue(lines[2].startswith("1 "))
+        self.assertTrue(lines[3].startswith("2 "))
+        # 번호 없는 표와 KEY 열 이후 내용은 같다
+        plain = render_list_table([_issue(), _issue()]).splitlines()
+        self.assertTrue(lines[2].endswith(plain[2]))
+
     def test_placeholders_for_missing(self) -> None:
         table = render_list_table([{"fields": {}}])
         self.assertIn("(미할당)", table)

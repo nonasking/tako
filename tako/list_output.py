@@ -90,8 +90,14 @@ def _fit(cell: str, width: int) -> str:
     return "".join(out) + " " * (width - used)
 
 
-def render_list_table(issues: list[dict[str, Any]], *, sp_field_id: str | None = None) -> str:
-    """사람 친화 표. SP 매핑 있으면 SP 컬럼 추가."""
+def render_list_table(
+    issues: list[dict[str, Any]], *, sp_field_id: str | None = None, numbered: bool = False
+) -> str:
+    """사람 친화 표. SP 매핑 있으면 SP 컬럼 추가.
+
+    numbered=True 면 맨 앞에 1부터 세는 행 번호 열이 붙는다 — 위저드가 표를 찍은 뒤
+    "몇 번을 브라우저로 열까" 물을 때 그 번호를 쓴다. 번호는 issues 순서와 같다.
+    """
     has_sp = bool(sp_field_id)
     if has_sp:
         header = ("KEY", "상태", "유형", "SP", "담당자", "생성", "업데이트", "기한", "제목")
@@ -99,18 +105,23 @@ def render_list_table(issues: list[dict[str, Any]], *, sp_field_id: str | None =
     else:
         header = ("KEY", "상태", "유형", "담당자", "생성", "업데이트", "기한", "제목")
         widths = (12, 10, 12, 14, 11, 11, 11, 55)
+    if numbered:
+        header = ("#",) + header
+        # 자릿수 + 여백 1칸, 헤더 '#' 와 구분선이 들어갈 최소 3칸
+        widths = (max(3, len(str(len(issues))) + 1),) + widths
 
     rows: list[tuple[str, ...]] = []
-    for it in issues:
+    for idx, it in enumerate(issues, start=1):
         c = issue_cells(it, sp_field_id=sp_field_id)
         key = c["key"] or "?"
         status = c["status"] or "?"
         itype = c["type"] or "?"
         assignee = c["assignee"] or "(미할당)"
         if has_sp:
-            rows.append((key, status, itype, c["story_points"], assignee, c["created"], c["updated"], c["duedate"], c["summary"]))
+            row: tuple[str, ...] = (key, status, itype, c["story_points"], assignee, c["created"], c["updated"], c["duedate"], c["summary"])
         else:
-            rows.append((key, status, itype, assignee, c["created"], c["updated"], c["duedate"], c["summary"]))
+            row = (key, status, itype, assignee, c["created"], c["updated"], c["duedate"], c["summary"])
+        rows.append(((str(idx),) + row) if numbered else row)
 
     def line(row: tuple[str, ...]) -> str:
         return "  ".join(_fit(cell, widths[i] if i < len(widths) else 10) for i, cell in enumerate(row)).rstrip()

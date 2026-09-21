@@ -1,4 +1,4 @@
-"""cmd_list 의 페이지네이션·필터 조립·셸 힌트·브라우저 열기 단위 테스트 (네트워크 없음).
+"""cmd_list 의 페이지네이션·필터 조립·셸 힌트·브라우저 열기·위저드 열기 프롬프트/선택 파서 단위 테스트 (네트워크 없음).
 
 실행: python -m unittest tests.test_cmd_list
 """
@@ -10,7 +10,14 @@ import unittest
 from contextlib import redirect_stderr
 from unittest.mock import patch
 
-from tako.cmd_list import _build_filters, _fetch_issues, _filters_to_shell_hint, _open_in_browser
+from tako.cmd_list import (
+    _build_filters,
+    _fetch_issues,
+    _filters_to_shell_hint,
+    _open_in_browser,
+    _pick_issues,
+    _prompt_open_targets,
+)
 from tako.list_output import search_page_url
 from tako.list_query import DEFAULT_LIST_LIMIT, OPEN_EACH_CAP, ListOutputOpts
 
@@ -196,6 +203,96 @@ class BrowserOpenTest(unittest.TestCase):
         self.assertEqual(len(self.opened[0]), 2)
         self.assertIn("/issues/?jql=", self.opened[0][0])
         self.assertTrue(self.opened[0][1].endswith("/browse/WL-1"))
+
+
+class PickIssuesTest(unittest.TestCase):
+    """위저드 '브라우저로 열기' 입력 → 결과 이슈 선택. 번호·범위·키 혼용."""
+
+    def setUp(self) -> None:
+        self.issues = [_issue(i) for i in range(1, 8)]
+
+    def _keys(self, raw: str) -> list[str]:
+        return [it["key"] for it in _pick_issues(raw, self.issues)]
+
+    def test_numbers_ranges_and_keys_mix(self) -> None:
+        self.assertEqual(self._keys("1,3 5-6 WL-7"), ["WL-1", "WL-3", "WL-5", "WL-6", "WL-7"])
+
+    def test_duplicates_collapse_and_order_is_input_order(self) -> None:
+        self.assertEqual(self._keys("3 1 3 wl-1"), ["WL-3", "WL-1"])
+
+    def test_out_of_range_number_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            _pick_issues("8", self.issues)
+        with self.assertRaises(ValueError):
+            _pick_issues("0", self.issues)
+
+    def test_bad_range_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            _pick_issues("5-3", self.issues)
+        with self.assertRaises(ValueError):
+            _pick_issues("6-9", self.issues)
+
+    def test_unknown_key_rejects_whole_input(self) -> None:
+        # 일부만 열고 나머지를 조용히 버리지 않는다
+        with self.assertRaises(ValueError):
+            _pick_issues("1 WL-99", self.issues)
+
+
+class WizardOpenPromptTest(unittest.TestCase):
+    """표 출력 뒤 반복 프롬프트. Enter 로 끝, s/a 는 힌트용 opts 에 반영."""
+
+    def _run(self, answers: list[str], issues=None):
+        issues = issues if issues is not None else [_issue(i) for i in range(1, 4)]
+        self.opened: list[list[str]] = []
+        buf = io.StringIO()
+        with (
+            patch("tako.cmd_list.ask_text", side_effect=answers),
+            patch("tako.cmd_list.open_urls", side_effect=lambda urls: (self.opened.append(list(urls)), len(urls))[1]),
+            patch("tako.cmd_list.stdin_is_tty", return_value=True),
+            redirect_stderr(buf),
+        ):
+            opts = _prompt_open_targets(issues, jql="project = WL", site="x.atlassian.net", opts=ListOutputOpts())
+        return opts, buf.getvalue()
+
+    def test_enter_ends_without_opening(self) -> None:
+        opts, _ = self._run([""])
+        self.assertEqual(self.opened, [])
+        self.assertFalse(opts.open_each or opts.open_search)
+
+    def test_partial_pick_opens_only_those_and_loops(self) -> None:
+        opts, _ = self._run(["1 3", "2", ""])
+        self.assertEqual(self.opened, [
+            ["https://x.atlassian.net/browse/WL-1", "https://x.atlassian.net/browse/WL-3"],
+            ["https://x.atlassian.net/browse/WL-2"],
+        ])
+        # 부분 선택은 셸 인자로 재현 불가 — 힌트에 반영하지 않는다
+        self.assertFalse(opts.open_each or opts.open_search)
+
+    def test_all_opens_every_result_and_marks_hint(self) -> None:
+        opts, _ = self._run(["a", ""])
+        self.assertEqual(len(self.opened[0]), 3)
+        self.assertTrue(opts.open_each)
+
+    def test_search_opens_one_tab_and_marks_hint(self) -> None:
+        opts, _ = self._run(["S", ""])
+        self.assertEqual(len(self.opened), 1)
+        self.assertIn("/issues/?jql=", self.opened[0][0])
+        self.assertTrue(opts.open_search)
+
+    def test_bad_input_reprompts(self) -> None:
+        _, err = self._run(["9", "WL-77", "1", ""])
+        self.assertIn("벗어남", err)
+        self.assertIn("결과에 없음", err)
+        self.assertEqual(len(self.opened), 1)
+
+    def test_all_over_cap_asks_first(self) -> None:
+        issues = [_issue(i) for i in range(1, OPEN_EACH_CAP + 2)]
+        with patch("tako.cmd_list.confirm", return_value=False):
+            opts, err = self._run(["a", ""], issues=issues)
+        self.assertEqual(self.opened, [])
+        self.assertIn("취소", err)
+        # 취소했으면 힌트에도 --open-each 를 권하지 않는다
+        self.assertFalse(opts.open_each)
 
 
 if __name__ == "__main__":
