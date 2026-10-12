@@ -20,7 +20,7 @@ from typing import Any
 
 
 # SP 매핑 유무에 따라 동적으로 결정 (issues_to_csv 에서 처리)
-_BASE_COLUMNS = ("key", "status", "type", "assignee", "created", "updated", "duedate", "summary", "parent", "url")
+_BASE_COLUMNS = ("key", "status", "type", "assignee", "reporter", "created", "updated", "duedate", "summary", "parent", "url")
 
 
 def issue_cells(issue: dict[str, Any], *, sp_field_id: str | None = None) -> dict[str, str]:
@@ -37,6 +37,7 @@ def issue_cells(issue: dict[str, Any], *, sp_field_id: str | None = None) -> dic
         "type": (f.get("issuetype") or {}).get("name", ""),
         "story_points": sp,
         "assignee": ((f.get("assignee") or {}).get("displayName")) or "",
+        "reporter": ((f.get("reporter") or {}).get("displayName")) or "",
         "created": (f.get("created") or "")[:10],
         "updated": (f.get("updated") or "")[:10],
         "duedate": f.get("duedate") or "",
@@ -100,11 +101,11 @@ def render_list_table(
     """
     has_sp = bool(sp_field_id)
     if has_sp:
-        header = ("KEY", "상태", "유형", "SP", "담당자", "생성", "업데이트", "기한", "제목")
-        widths = (12, 10, 12, 5, 14, 11, 11, 11, 50)
+        header = ("KEY", "상태", "유형", "SP", "담당자", "보고자", "생성", "업데이트", "기한", "제목")
+        widths = (12, 10, 12, 5, 14, 14, 11, 11, 11, 50)
     else:
-        header = ("KEY", "상태", "유형", "담당자", "생성", "업데이트", "기한", "제목")
-        widths = (12, 10, 12, 14, 11, 11, 11, 55)
+        header = ("KEY", "상태", "유형", "담당자", "보고자", "생성", "업데이트", "기한", "제목")
+        widths = (12, 10, 12, 14, 14, 11, 11, 11, 55)
     if numbered:
         header = ("#",) + header
         # 자릿수 + 여백 1칸, 헤더 '#' 와 구분선이 들어갈 최소 3칸
@@ -117,10 +118,11 @@ def render_list_table(
         status = c["status"] or "?"
         itype = c["type"] or "?"
         assignee = c["assignee"] or "(미할당)"
+        reporter = c["reporter"] or "(없음)"
         if has_sp:
-            row: tuple[str, ...] = (key, status, itype, c["story_points"], assignee, c["created"], c["updated"], c["duedate"], c["summary"])
+            row: tuple[str, ...] = (key, status, itype, c["story_points"], assignee, reporter, c["created"], c["updated"], c["duedate"], c["summary"])
         else:
-            row = (key, status, itype, assignee, c["created"], c["updated"], c["duedate"], c["summary"])
+            row = (key, status, itype, assignee, reporter, c["created"], c["updated"], c["duedate"], c["summary"])
         rows.append(((str(idx),) + row) if numbered else row)
 
     def line(row: tuple[str, ...]) -> str:

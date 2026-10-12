@@ -279,6 +279,7 @@ tako list --type 에픽 --limit 50
 tako list --parent WL-9200          # child issues
 tako list --label backend --query 정렬
 tako list --project WL --project ABC --assignee me   # multiple projects at once
+tako list --reporter me --updated 30d              # tickets you filed
 
 # advanced — raw JQL (ignores other args)
 tako list --jql "project = WL AND assignee = currentUser() AND duedate < now()"
@@ -301,7 +302,7 @@ tako list --parent WL-9200 --open-each      # one tab per ticket (asks first abo
 (`my-issues.csv` → `my-issues-2026-08-03_142530.csv`) and the path actually written is printed to stderr.
 Missing parent directories are created. Note that a shell redirect (`>`) is your shell's job, so it still truncates.
 
-Supported args: `--assignee` (me / email / accountId), `--project` (repeatable, query multiple projects at once), `--status` (repeatable), `--type` (repeatable), `--parent`, `--label` (repeatable), `--updated` / `--created` (`7d`/`1w`/`YYYY-MM-DD` / comparisons like `<=YYYY-MM-DD` / `YYYY-MM-DD..YYYY-MM-DD` range), `--due` (`overdue` / `none` / `set` / `YYYY-MM-DD` / `<=YYYY-MM-DD` etc. / range), `--sp` (integer / `>=N` / `<=N` / `none` / `set`), `--query`, `--jql`, `--limit` (default 20 — caps total results, auto-paging past 100), `--all` (fetch everything, ignores `--limit`), `--json`, `--csv`, `--output / -o`, `--open` (Jira search page in one tab), `--open-each` (one tab per ticket, confirm above 20), `--wizard / -i` (interactive input).
+Supported args: `--assignee` / `--reporter` (me / email / accountId), `--project` (repeatable, query multiple projects at once), `--status` (repeatable), `--type` (repeatable), `--parent`, `--label` (repeatable), `--updated` / `--created` (`7d`/`1w`/`YYYY-MM-DD` / comparisons like `<=YYYY-MM-DD` / `YYYY-MM-DD..YYYY-MM-DD` range), `--due` (`overdue` / `none` / `set` / `YYYY-MM-DD` / `<=YYYY-MM-DD` etc. / range), `--sp` (integer / `>=N` / `<=N` / `none` / `set`), `--query`, `--jql`, `--limit` (default 20 — caps total results, auto-paging past 100), `--all` (fetch everything, ignores `--limit`), `--json`, `--csv`, `--output / -o`, `--open` (Jira search page in one tab), `--open-each` (one tab per ticket, confirm above 20), `--wizard / -i` (interactive input).
 
 The *range* form for `--updated` / `--created` / `--due` is `YYYY-MM-DD..YYYY-MM-DD` or `YYYY-MM-DD~YYYY-MM-DD` (alias), both endpoints inclusive. It can't be mixed with shorthand (`7d`). If the start is later than the end, it's rejected.
 
@@ -326,7 +327,7 @@ In wizard mode the table gets a row-number column, and once it's printed a *brow
 
 **`전체` / `all` / `*` keyword** — usable on any filter (both interactive and CLI):
 
-- Status / type / label / assignee: `전체` (all) = same as blank input (that condition isn't applied).
+- Status / type / label / assignee / reporter: `전체` (all) = same as blank input (that condition isn't applied).
 - Project: `전체` = ignore `default_project` too + drop the `project` clause from the JQL entirely → all projects on the site.
 - Max results (`--limit` / interactive limit step): `전체` = auto `--all` + 100 per page to the end.
 
@@ -339,7 +340,7 @@ tako list -i  # answering "Project: 전체", "Max: 전체" in interactive mode d
 
 `--all` auto-repeats every page (100 max per page). Beware large result sets — 943 issues span about 10 pages. A `--limit` above 100 also pages automatically, but stops at the cap (e.g. `--limit 250` → 3 requests, 250 rows).
 
-Default columns: `key, status, type, assignee, created, updated, duedate, summary, parent, url`. If your config has a `jira.fields.story_points` mapping, a `story_points` column is auto-added right after `type`. Without the mapping, SP filter/column are disabled with a notice.
+Default columns: `key, status, type, assignee, reporter, created, updated, duedate, summary, parent, url`. If your config has a `jira.fields.story_points` mapping, a `story_points` column is auto-added right after `type`. Without the mapping, SP filter/column are disabled with a notice.
 
 ```bash
 # due / SP filter examples
@@ -362,7 +363,7 @@ Claude Code slash commands do *natural language → arg mapping*:
 /tako-list in-progress in the last month + label backend
 ```
 
-> Assignee by *Korean name* is unsupported in v1.x. Only `me` / email / accountId.
+> Assignee / reporter by *Korean name* is unsupported in v1.x. Only `me` / email / accountId.
 
 ### G) Customize the body-writing guide (`tako guide` / `/tako-guide`)
 

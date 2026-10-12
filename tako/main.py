@@ -106,6 +106,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
     list_parser = sub.add_parser("list", help="JQL 기반 이슈 검색 + 필터링")
     list_parser.add_argument("--assignee", help="담당자: 'me' / 이메일 / accountId")
+    list_parser.add_argument("--reporter", help="보고자: 'me' / 이메일 / accountId")
     list_parser.add_argument(
         "--project",
         action="append",

@@ -26,6 +26,7 @@ OPEN_EACH_CAP = 20  # --open-each 가 확인 없이 여는 탭 수 상한. DEFAU
 class ListFilters:
     """사용자 인자를 그대로 보존한 필터 묶음."""
     assignee: str | None = None
+    reporter: str | None = None
     projects: tuple[str, ...] = ()
     statuses: tuple[str, ...] = ()
     types: tuple[str, ...] = ()
@@ -80,16 +81,20 @@ def _project_clause(values: tuple[str, ...]) -> str:
     return f"project in ({items})"
 
 
-def _assignee_clause(value: str) -> str:
+def _user_clause(field: str, value: str) -> str:
+    """담당자/보고자 공용 — 'me' 는 currentUser(), 이메일·accountId 는 따옴표 리터럴.
+
+    필드 이름만 다르고 해석 규칙은 같다. 이메일 해석은 Jira 에 맡긴다.
+    """
     value = value.strip()
     if value.lower() in {"me", "current", "self"}:
-        return "assignee = currentUser()"
+        return f"{field} = currentUser()"
     if "@" in value:  # 이메일
-        return f'assignee = "{_esc(value)}"'
+        return f'{field} = "{_esc(value)}"'
     if looks_like_account_id(value):
-        return f'assignee = "{_esc(value)}"'
+        return f'{field} = "{_esc(value)}"'
     raise QueryError(
-        f"assignee 값 형식 미지원: {value!r}\n"
+        f"{field} 값 형식 미지원: {value!r}\n"
         "  지원: 'me' / 이메일 / accountId\n"
         "  한국어 이름·닉네임은 v1.x 미지원 — accountId 로 변환 후 사용."
     )
@@ -248,7 +253,10 @@ def build_jql(
         clauses.append(_project_clause(projects))
 
     if filters.assignee:
-        clauses.append(_assignee_clause(filters.assignee))
+        clauses.append(_user_clause("assignee", filters.assignee))
+
+    if filters.reporter:
+        clauses.append(_user_clause("reporter", filters.reporter))
 
     if filters.statuses:
         items = ", ".join(f'"{_esc(s)}"' for s in filters.statuses)

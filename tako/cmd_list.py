@@ -57,6 +57,7 @@ def _ask_csv_list(prompt_text: str) -> tuple[str, ...]:
 def _build_filters(
     *,
     assignee: str | None,
+    reporter: str | None,
     projects: tuple[str, ...],
     statuses: tuple[str, ...],
     types: tuple[str, ...],
@@ -77,6 +78,7 @@ def _build_filters(
     all_projects = any(_is_all_keyword(p) for p in projects)
     return ListFilters(
         assignee=None if _is_all_keyword(assignee) else (assignee or None),
+        reporter=None if _is_all_keyword(reporter) else (reporter or None),
         projects=() if all_projects else tuple(p for p in projects if p and p.strip()),
         statuses=_normalize_multi_filter(statuses),
         types=_normalize_multi_filter(types),
@@ -113,6 +115,7 @@ def _collect_list_filters_interactively(
 
     filters = _build_filters(
         assignee=args.assignee or _ask_optional("담당자 (me / 이메일 / accountId, 없으면 Enter)"),
+        reporter=args.reporter or _ask_optional("보고자 (me / 이메일 / accountId, 없으면 Enter)"),
         projects=tuple(args.project) or _ask_csv_list(
             f"프로젝트 (쉼표로 여러 개, 없으면 Enter — 기본 {cfg.jira.default_project}, '전체' = 사이트 전체)"
         ),
@@ -184,6 +187,8 @@ def _filters_to_shell_hint(filters: ListFilters, opts: ListOutputOpts) -> str:
         return " ".join(parts)
     if filters.assignee:
         parts += ["--assignee", shlex.quote(filters.assignee)]
+    if filters.reporter:
+        parts += ["--reporter", shlex.quote(filters.reporter)]
     if filters.all_projects:
         parts += ["--project", "전체"]
     else:
@@ -278,6 +283,7 @@ def cmd_list(args: Any, cfg: TakoConfig) -> int:
     else:
         filters = _build_filters(
             assignee=args.assignee,
+            reporter=args.reporter,
             projects=tuple(args.project),
             statuses=tuple(args.status),
             types=tuple(args.types),
@@ -315,7 +321,7 @@ def cmd_list(args: Any, cfg: TakoConfig) -> int:
     client = build_client(cfg, args.credentials)
     sys.stderr.write(f"JQL: {jql}\n")
 
-    fields_req = ["summary", "status", "issuetype", "assignee", "created", "updated", "parent", "duedate"]
+    fields_req = ["summary", "status", "issuetype", "assignee", "reporter", "created", "updated", "parent", "duedate"]
     if sp_field_id:
         fields_req.append(sp_field_id)
 
