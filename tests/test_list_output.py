@@ -26,6 +26,7 @@ def _issue(**over) -> dict:
             "status": {"name": "진행중"},
             "issuetype": {"name": "기능변경"},
             "assignee": {"displayName": "강민성"},
+            "reporter": {"displayName": "김주열"},
             "created": "2026-08-01T09:00:00.000+0900",
             "updated": "2026-08-02T10:00:00.000+0900",
             "duedate": "2026-08-10",
@@ -44,10 +45,11 @@ class IssueCellsTest(unittest.TestCase):
         self.assertEqual(c["status"], "진행중")
         self.assertEqual(c["created"], "2026-08-01")  # 날짜만
         self.assertEqual(c["parent"], "WL-9200")
+        self.assertEqual(c["reporter"], "김주열")
 
     def test_missing_values_are_empty_strings(self) -> None:
         c = issue_cells({"key": "WL-2", "fields": {}})
-        for name in ("status", "type", "assignee", "created", "duedate", "summary", "parent"):
+        for name in ("status", "type", "assignee", "reporter", "created", "duedate", "summary", "parent"):
             self.assertEqual(c[name], "", name)
 
     def test_sp_int_formatting(self) -> None:
@@ -62,7 +64,7 @@ class CsvTest(unittest.TestCase):
         text = issues_to_csv([_issue()], site="x.atlassian.net")
         self.assertTrue(text.startswith("﻿"))
         header, row = text.lstrip("﻿").splitlines()[:2]
-        self.assertEqual(header, "key,status,type,assignee,created,updated,duedate,summary,parent,url")
+        self.assertEqual(header, "key,status,type,assignee,reporter,created,updated,duedate,summary,parent,url")
         self.assertIn("https://x.atlassian.net/browse/WL-1", row)
 
     def test_sp_column_inserted_after_type(self) -> None:
@@ -111,7 +113,15 @@ class RenderTableTest(unittest.TestCase):
     def test_placeholders_for_missing(self) -> None:
         table = render_list_table([{"fields": {}}])
         self.assertIn("(미할당)", table)
+        self.assertIn("(없음)", table)  # 보고자
         self.assertIn("?", table)
+
+    def test_reporter_column_follows_assignee(self) -> None:
+        for sp in (None, SP_FIELD):
+            lines = render_list_table([_issue()], sp_field_id=sp).splitlines()
+            header = lines[0].split()
+            self.assertEqual(header.index("보고자"), header.index("담당자") + 1)
+            self.assertIn("김주열", lines[2])
 
 
 if __name__ == "__main__":

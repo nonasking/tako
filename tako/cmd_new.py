@@ -214,7 +214,7 @@ def _resolve_user(value: str, client: JiraSiteClient, *, role: str = "담당자"
     양쪽이 같은 해석 규칙을 쓰므로 문구만 갈아 끼운다.
     실패 시 _ResolveError — 호출자가 종료할지, 편집기로 되돌릴지 정한다.
 
-    list_query._assignee_clause 와 의도적 분리:
+    list_query._user_clause 와 의도적 분리:
     저쪽은 JQL 문자열만 만들어 currentUser()/이메일 그대로 두면 Jira 가 해석.
     여기는 issue 생성 페이로드의 사용자 필드에 *accountId 가 필수* 라서
     REST 두 번(/myself, /user/search) 으로 직접 해석한다.

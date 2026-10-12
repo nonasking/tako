@@ -110,6 +110,23 @@ class BuildJqlTest(unittest.TestCase):
             jql, "project = WL AND assignee = currentUser() ORDER BY updated DESC"
         )
 
+    def test_reporter_uses_same_rules_as_assignee(self) -> None:
+        jql = build_jql(ListFilters(reporter="me"), default_project="WL")
+        self.assertEqual(
+            jql, "project = WL AND reporter = currentUser() ORDER BY updated DESC"
+        )
+        jql = build_jql(ListFilters(reporter="a@b.com"), default_project="WL")
+        self.assertIn('reporter = "a@b.com"', jql)
+
+    def test_assignee_and_reporter_combine(self) -> None:
+        jql = build_jql(ListFilters(assignee="me", reporter="a@b.com"), default_project="WL")
+        self.assertIn('assignee = currentUser() AND reporter = "a@b.com"', jql)
+
+    def test_reporter_rejects_korean_name(self) -> None:
+        with self.assertRaises(QueryError) as cm:
+            build_jql(ListFilters(reporter="강민성"), default_project="WL")
+        self.assertIn("reporter 값 형식 미지원", str(cm.exception))
+
     def test_multiple_projects_use_in(self) -> None:
         jql = build_jql(ListFilters(projects=("wl", "ABC")), default_project="ZZ")
         self.assertIn("project in (WL, ABC)", jql)  # 대문자 정규화

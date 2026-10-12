@@ -87,7 +87,7 @@ class FetchIssuesTest(unittest.TestCase):
 class BuildFiltersTest(unittest.TestCase):
     def _base(self, **kw):
         defaults = dict(
-            assignee=None, projects=(), statuses=(), types=(), parent=None,
+            assignee=None, reporter=None, projects=(), statuses=(), types=(), parent=None,
             labels=(), updated=None, created=None, due=None, sp=None,
             query=None, raw_jql=None,
         )
@@ -98,6 +98,10 @@ class BuildFiltersTest(unittest.TestCase):
         f = self._base(projects=("전체",))
         self.assertTrue(f.all_projects)
         self.assertEqual(f.projects, ())
+
+    def test_all_keyword_on_reporter_clears_it(self) -> None:
+        f = self._base(reporter="전체")
+        self.assertIsNone(f.reporter)
 
     def test_all_keyword_on_assignee_clears_it(self) -> None:
         f = self._base(assignee="all")
@@ -123,7 +127,7 @@ class BuildFiltersTest(unittest.TestCase):
 class ShellHintTest(unittest.TestCase):
     def test_fetch_all_hides_limit(self) -> None:
         f = _build_filters(
-            assignee="me", projects=(), statuses=(), types=(), parent=None,
+            assignee="me", reporter=None, projects=(), statuses=(), types=(), parent=None,
             labels=(), updated=None, created=None, due=None, sp=None,
             query=None, raw_jql=None,
         )
@@ -134,7 +138,7 @@ class ShellHintTest(unittest.TestCase):
 
     def test_custom_limit_shown_without_all(self) -> None:
         f = _build_filters(
-            assignee="me", projects=(), statuses=(), types=(), parent=None,
+            assignee="me", reporter=None, projects=(), statuses=(), types=(), parent=None,
             labels=(), updated=None, created=None, due=None, sp=None,
             query=None, raw_jql=None,
         )
@@ -143,9 +147,17 @@ class ShellHintTest(unittest.TestCase):
         self.assertIn("--limit 50", hint)
 
 
+    def test_shell_hint_includes_reporter(self) -> None:
+        hint = _filters_to_shell_hint(
+            _build_filters(assignee=None, reporter="me", projects=(), statuses=(), types=(), parent=None, labels=(),
+                           updated=None, created=None, due=None, sp=None, query=None, raw_jql=None),
+            ListOutputOpts(),
+        )
+        self.assertEqual(hint, "tako list --reporter me")
+
     def test_shell_hint_includes_open_flags(self) -> None:
         hint = _filters_to_shell_hint(
-            _build_filters(assignee="me", projects=(), statuses=(), types=(), parent=None, labels=(),
+            _build_filters(assignee="me", reporter=None, projects=(), statuses=(), types=(), parent=None, labels=(),
                            updated=None, created=None, due=None, sp=None, query=None, raw_jql=None),
             ListOutputOpts(open_search=True, open_each=True),
         )
