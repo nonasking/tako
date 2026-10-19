@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .patterns import ISSUE_KEY_RE, looks_like_account_id
+from .patterns import ISSUE_KEY_RE, is_self_alias, looks_like_account_id
 
 
 _PROJECT_KEY = re.compile(r"^[A-Z][A-Z0-9_]*$")
@@ -87,7 +87,7 @@ def _user_clause(field: str, value: str) -> str:
     필드 이름만 다르고 해석 규칙은 같다. 이메일 해석은 Jira 에 맡긴다.
     """
     value = value.strip()
-    if value.lower() in {"me", "current", "self"}:
+    if is_self_alias(value):
         return f"{field} = currentUser()"
     if "@" in value:  # 이메일
         return f'{field} = "{_esc(value)}"'

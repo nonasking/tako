@@ -23,7 +23,7 @@ from .draft_file import (
 )
 from .issue_draft import DraftError, IssueDraft, build_payload, render_preview
 from .jira_client import JiraApiError, JiraSiteClient, markdown_to_adf
-from .patterns import looks_like_account_id
+from .patterns import is_self_alias, looks_like_account_id
 from .prompts import ask_choice, ask_multiline, ask_text, confirm, confirm_or_edit, stdin_is_tty
 
 
@@ -220,7 +220,7 @@ def _resolve_user(value: str, client: JiraSiteClient, *, role: str = "담당자"
     REST 두 번(/myself, /user/search) 으로 직접 해석한다.
     """
     v = value.strip()
-    if v.lower() in {"me", "current", "self"}:
+    if is_self_alias(v):
         try:
             data = client.get_myself()
         except JiraApiError as exc:

@@ -12,7 +12,7 @@ from .adf_to_md import adf_to_markdown
 from .cmd_common import build_client, today_kst_str
 from .config import TakoConfig
 from .jira_client import JiraApiError, markdown_to_adf
-from .patterns import extract_issue_key
+from .patterns import browse_url, extract_issue_key
 from .prompts import confirm
 
 
@@ -37,6 +37,7 @@ def _read_body_input(args: Any) -> str:
 
 def cmd_update(args: Any, cfg: TakoConfig) -> int:
     key = extract_issue_key(args.key)
+    url = browse_url(cfg.jira.site, key)
 
     new_summary: str | None = None
     if args.summary is not None:
@@ -86,7 +87,7 @@ def cmd_update(args: Any, cfg: TakoConfig) -> int:
 
     # 미리보기
     sys.stderr.write(f"\n[{key}] {current_summary}\n")
-    sys.stderr.write(f"링크: https://{cfg.jira.site}/browse/{key}\n")
+    sys.stderr.write(f"링크: {url}\n")
 
     if new_summary is not None:
         sys.stderr.write("\n--- 제목 변경 ---\n")
@@ -126,7 +127,7 @@ def cmd_update(args: Any, cfg: TakoConfig) -> int:
         sys.stderr.write(f"[jira] {exc}\n")
         return 2
 
-    sys.stderr.write(f"\n업데이트 완료: {key}\n  링크: https://{cfg.jira.site}/browse/{key}\n")
+    sys.stderr.write(f"\n업데이트 완료: {key}\n  링크: {url}\n")
     print(key)
     return 0
 
@@ -150,6 +151,7 @@ def _match_issue_type(target: str, allowed: list[dict[str, Any]]) -> dict[str, A
 
 def cmd_retype(args: Any, cfg: TakoConfig) -> int:
     key = extract_issue_key(args.key)
+    url = browse_url(cfg.jira.site, key)
     target = (args.to or args.to_opt or "").strip()
     if not target:
         sys.stderr.write("[retype] 새 유형을 지정하세요. 예: tako retype WL-1234 Story\n")
@@ -202,7 +204,7 @@ def cmd_retype(args: Any, cfg: TakoConfig) -> int:
 
     # 미리보기
     sys.stderr.write(f"\n[{key}] {current_summary}\n")
-    sys.stderr.write(f"링크: https://{cfg.jira.site}/browse/{key}\n")
+    sys.stderr.write(f"링크: {url}\n")
     sys.stderr.write("\n--- 유형 변경 ---\n")
     sys.stderr.write(f"  현재: {current_type}\n")
     sys.stderr.write(f"  변경: {chosen_name}\n")
@@ -234,13 +236,13 @@ def cmd_retype(args: Any, cfg: TakoConfig) -> int:
             f"\n[경고] 적용 후 유형이 '{after_type}' 입니다 (요청: '{chosen_name}').\n"
             "  사이트 워크플로/화면 설정이 변경을 일부만 반영했을 수 있어요. Jira 에서 확인하세요.\n"
         )
-        sys.stderr.write(f"링크: https://{cfg.jira.site}/browse/{key}\n")
+        sys.stderr.write(f"링크: {url}\n")
         print(key)
         return 2
 
     sys.stderr.write(
         f"\n유형 변경 완료: {key}\n  {current_type} → {after_type}\n"
-        f"  링크: https://{cfg.jira.site}/browse/{key}\n"
+        f"  링크: {url}\n"
     )
     print(key)
     return 0

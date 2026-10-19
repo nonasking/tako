@@ -18,6 +18,8 @@ import io
 import unicodedata
 from typing import Any
 
+from .patterns import browse_url
+
 
 # SP 매핑 유무에 따라 동적으로 결정 (issues_to_csv 에서 처리)
 _BASE_COLUMNS = ("key", "status", "type", "assignee", "reporter", "created", "updated", "duedate", "summary", "parent", "url")
@@ -130,10 +132,6 @@ def render_list_table(
 
     divider = tuple("-" * (w - 2) for w in widths)
     return "\n".join([line(header), line(divider)] + [line(r) for r in rows])
-
-
-def browse_url(site: str, key: str) -> str:
-    return f"https://{site}/browse/{key}"
 
 
 def browse_urls(issues: list[dict[str, Any]], site: str) -> list[str]:
