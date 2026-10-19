@@ -9,10 +9,12 @@
 from __future__ import annotations
 
 import sys
+from datetime import datetime, timedelta, timezone
 
 from .auth import Credentials, CredentialsError, load_credentials, resolve_credentials_path
 from .config import (
     ConfigError,
+    ConfigNotFoundError,
     TakoConfig,
     first_run_guide,
     interactive_init,
@@ -25,12 +27,11 @@ from .jira_client import JiraSiteClient
 def load_config_or_guide(path: str | None, credentials_path: str | None = None) -> TakoConfig:
     try:
         return load_config(path)
-    except ConfigError as exc:
-        msg = str(exc)
-        if not msg.startswith("설정 파일이 없습니다"):
-            sys.stderr.write(f"[config] {msg}\n")
-            raise SystemExit(2)
+    except ConfigNotFoundError:
         return _offer_init(path, credentials_path)
+    except ConfigError as exc:
+        sys.stderr.write(f"[config] {exc}\n")
+        raise SystemExit(2)
 
 
 def _offer_init(path: str | None, credentials_path: str | None = None) -> TakoConfig:
@@ -79,15 +80,14 @@ def build_client(cfg: TakoConfig, credentials_path: str | None) -> JiraSiteClien
     return JiraSiteClient(site=cfg.jira.site, creds=load_credentials_or_guide(credentials_path))
 
 
+_KST = timezone(timedelta(hours=9))
+
+
 def today_kst_str() -> str:
     """KST(UTC+9) 기준 YYYY-MM-DD."""
-    from datetime import datetime, timedelta, timezone
-    kst = timezone(timedelta(hours=9))
-    return datetime.now(tz=kst).strftime("%Y-%m-%d")
+    return datetime.now(tz=_KST).strftime("%Y-%m-%d")
 
 
 def stamp_kst_str() -> str:
     """KST(UTC+9) 기준 YYYY-MM-DD_HHMMSS. 저장 파일명 충돌 회피용."""
-    from datetime import datetime, timedelta, timezone
-    kst = timezone(timedelta(hours=9))
-    return datetime.now(tz=kst).strftime("%Y-%m-%d_%H%M%S")
+    return datetime.now(tz=_KST).strftime("%Y-%m-%d_%H%M%S")

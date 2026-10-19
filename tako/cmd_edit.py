@@ -12,31 +12,27 @@ from .adf_to_md import adf_to_markdown
 from .cmd_common import build_client, today_kst_str
 from .config import TakoConfig
 from .jira_client import JiraApiError, markdown_to_adf
-from .patterns import extract_issue_key
+from .patterns import browse_url, extract_issue_key
 from .prompts import confirm
 
 
-def _read_body_input(args: Any) -> str:
-    """body 텍스트를 우선순위로 받음: --body 인자 > stdin > TTY 입력."""
-    if args.body is not None:
-        return args.body
-    if not sys.stdin.isatty():
-        raw = sys.stdin.read()
-        if not raw.strip():
-            sys.stderr.write("[update] body 가 비었음. --body 또는 stdin 으로 마크다운 전달.\n")
-            raise SystemExit(2)
-        return raw.rstrip("\n")
-    sys.stderr.write("추가할 본문(마크다운) 을 입력 (Ctrl+D 로 종료)\n")
-    sys.stderr.flush()
+def _read_body_from_stdin() -> str:
+    """--body 가 없을 때 본문을 받는다: 파이프면 stdin 그대로, TTY 면 안내 후 Ctrl+D 까지."""
+    interactive = sys.stdin.isatty()
+    if interactive:
+        sys.stderr.write("추가할 본문(마크다운) 을 입력 (Ctrl+D 로 종료)\n")
+        sys.stderr.flush()
     raw = sys.stdin.read()
     if not raw.strip():
-        sys.stderr.write("[update] body 가 비었음.\n")
+        hint = "" if interactive else " --body 또는 stdin 으로 마크다운 전달."
+        sys.stderr.write(f"[update] body 가 비었음.{hint}\n")
         raise SystemExit(2)
     return raw.rstrip("\n")
 
 
 def cmd_update(args: Any, cfg: TakoConfig) -> int:
     key = extract_issue_key(args.key)
+    url = browse_url(cfg.jira.site, key)
 
     new_summary: str | None = None
     if args.summary is not None:
@@ -50,17 +46,14 @@ def cmd_update(args: Any, cfg: TakoConfig) -> int:
     # - --body 인자 있음 → 그 값
     # - --body 없고 --summary 있음 → 본문 안 바꿈 (None)
     # - 둘 다 없음 → stdin/TTY 로 본문 받기 (기존 흐름)
+    # 그래서 여기를 지나면 제목·본문 중 최소 하나는 반드시 있다.
     body_md: str | None
     if args.body is not None:
         body_md = args.body
     elif new_summary is not None:
         body_md = None  # 제목만 변경
     else:
-        body_md = _read_body_input(args)
-
-    if new_summary is None and body_md is None:
-        sys.stderr.write("[update] --summary 또는 --body 중 최소 하나는 필요.\n")
-        return 2
+        body_md = _read_body_from_stdin()
 
     client = build_client(cfg, args.credentials)
 
@@ -86,7 +79,7 @@ def cmd_update(args: Any, cfg: TakoConfig) -> int:
 
     # 미리보기
     sys.stderr.write(f"\n[{key}] {current_summary}\n")
-    sys.stderr.write(f"링크: https://{cfg.jira.site}/browse/{key}\n")
+    sys.stderr.write(f"링크: {url}\n")
 
     if new_summary is not None:
         sys.stderr.write("\n--- 제목 변경 ---\n")
@@ -126,9 +119,14 @@ def cmd_update(args: Any, cfg: TakoConfig) -> int:
         sys.stderr.write(f"[jira] {exc}\n")
         return 2
 
-    sys.stderr.write(f"\n업데이트 완료: {key}\n  링크: https://{cfg.jira.site}/browse/{key}\n")
+    sys.stderr.write(f"\n업데이트 완료: {key}\n  링크: {url}\n")
     print(key)
     return 0
+
+
+def _same_type_name(a: str, b: str) -> bool:
+    """유형 이름 비교 — Jira 는 대소문자를 가리지 않고, 사용자 입력엔 공백이 섞인다."""
+    return a.strip().lower() == b.strip().lower()
 
 
 def _match_issue_type(target: str, allowed: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -138,10 +136,10 @@ def _match_issue_type(target: str, allowed: list[dict[str, Any]]) -> dict[str, A
     매칭 성공 자체가 "그 이슈에 허용되는 변환" 을 보증한다 (allowedValues 가
     같은 계층 타입만 담으므로 하위작업↔표준 경계 변환은 여기서 자연히 걸러짐).
     """
-    t = target.strip()
     for item in allowed:
-        if (item.get("name") or "").strip().lower() == t.lower():
+        if _same_type_name(item.get("name") or "", target):
             return item
+    t = target.strip()
     for item in allowed:
         if str(item.get("id") or "") == t:
             return item
@@ -150,6 +148,7 @@ def _match_issue_type(target: str, allowed: list[dict[str, Any]]) -> dict[str, A
 
 def cmd_retype(args: Any, cfg: TakoConfig) -> int:
     key = extract_issue_key(args.key)
+    url = browse_url(cfg.jira.site, key)
     target = (args.to or args.to_opt or "").strip()
     if not target:
         sys.stderr.write("[retype] 새 유형을 지정하세요. 예: tako retype WL-1234 Story\n")
@@ -196,13 +195,13 @@ def cmd_retype(args: Any, cfg: TakoConfig) -> int:
         sys.stderr.write(f"[retype] 유형 '{chosen_name}' 의 id 를 찾지 못했습니다.\n")
         return 2
 
-    if chosen_name.strip().lower() == current_type.strip().lower():
+    if _same_type_name(chosen_name, current_type):
         sys.stderr.write(f"[retype] 이미 '{current_type}' 유형입니다. 변경할 게 없습니다: {key}\n")
         return 0
 
     # 미리보기
     sys.stderr.write(f"\n[{key}] {current_summary}\n")
-    sys.stderr.write(f"링크: https://{cfg.jira.site}/browse/{key}\n")
+    sys.stderr.write(f"링크: {url}\n")
     sys.stderr.write("\n--- 유형 변경 ---\n")
     sys.stderr.write(f"  현재: {current_type}\n")
     sys.stderr.write(f"  변경: {chosen_name}\n")
@@ -229,18 +228,18 @@ def cmd_retype(args: Any, cfg: TakoConfig) -> int:
     except JiraApiError:
         after_type = chosen_name  # 재조회 실패 시 요청값으로 보고
 
-    if after_type.strip().lower() != chosen_name.strip().lower():
+    if not _same_type_name(after_type, chosen_name):
         sys.stderr.write(
             f"\n[경고] 적용 후 유형이 '{after_type}' 입니다 (요청: '{chosen_name}').\n"
             "  사이트 워크플로/화면 설정이 변경을 일부만 반영했을 수 있어요. Jira 에서 확인하세요.\n"
         )
-        sys.stderr.write(f"링크: https://{cfg.jira.site}/browse/{key}\n")
+        sys.stderr.write(f"링크: {url}\n")
         print(key)
         return 2
 
     sys.stderr.write(
         f"\n유형 변경 완료: {key}\n  {current_type} → {after_type}\n"
-        f"  링크: https://{cfg.jira.site}/browse/{key}\n"
+        f"  링크: {url}\n"
     )
     print(key)
     return 0

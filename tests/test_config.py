@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tako.config import ConfigError, load_config
+from tako.config import ConfigError, ConfigNotFoundError, load_config
 
 
 VALID = """
@@ -60,8 +60,9 @@ class ConfigTest(unittest.TestCase):
 
     def test_missing_file(self) -> None:
         missing = Path(self._tmp.name) / "nope.yaml"
-        with self.assertRaises(ConfigError) as ctx:
+        with self.assertRaises(ConfigNotFoundError) as ctx:
             load_config(missing)
+        self.assertIsInstance(ctx.exception, ConfigError)  # 기존 except ConfigError 도 계속 잡혀야 한다
         self.assertTrue(str(ctx.exception).startswith("설정 파일이 없습니다"))
 
     def test_broken_yaml_and_non_mapping_root(self) -> None:

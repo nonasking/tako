@@ -13,6 +13,7 @@ from typing import Any
 import requests
 
 from .auth import Credentials
+from .patterns import browse_url
 
 
 class JiraApiError(Exception):
@@ -98,7 +99,7 @@ class JiraSiteClient:
             key = data.get("key")
             if not key:
                 raise JiraApiError(f"응답에 키 없음: {data}")
-            return CreatedIssue(key=key, url=f"https://{self._site}/browse/{key}", raw=data)
+            return CreatedIssue(key=key, url=browse_url(self._site, key), raw=data)
         raise JiraApiError(_format_error(resp))
 
     def list_fields(self) -> list[dict[str, Any]]:

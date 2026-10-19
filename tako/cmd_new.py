@@ -23,7 +23,7 @@ from .draft_file import (
 )
 from .issue_draft import DraftError, IssueDraft, build_payload, render_preview
 from .jira_client import JiraApiError, JiraSiteClient, markdown_to_adf
-from .patterns import looks_like_account_id
+from .patterns import is_self_alias, looks_like_account_id
 from .prompts import ask_choice, ask_multiline, ask_text, confirm, confirm_or_edit, stdin_is_tty
 
 
@@ -203,6 +203,10 @@ def cmd_interactive(cfg: TakoConfig) -> int:
     return 0
 
 
+# (payload 필드, 사용자 대면 역할 이름 — _resolve_user 의 role). 해석 순서도 이 순서 — 담당자 오류가 먼저 보인다.
+_USER_ROLES = (("assignee", "담당자"), ("reporter", "보고자"))
+
+
 class _ResolveError(Exception):
     """담당자/보고자 입력 해석 실패. 메시지는 사용자에게 그대로 보여줄 한국어."""
 
@@ -220,7 +224,7 @@ def _resolve_user(value: str, client: JiraSiteClient, *, role: str = "담당자"
     REST 두 번(/myself, /user/search) 으로 직접 해석한다.
     """
     v = value.strip()
-    if v.lower() in {"me", "current", "self"}:
+    if is_self_alias(v):
         try:
             data = client.get_myself()
         except JiraApiError as exc:
@@ -312,31 +316,23 @@ def _apply_pendings(payload: dict[str, Any], client: JiraSiteClient, cfg: TakoCo
     실패해도 pending 키는 남겨 둔다 — 편집기 라운드가 사용자가 넣은
     원래 입력을 그대로 다시 보여줄 수 있어야 한다.
     """
-    pending = payload.get("assignee_pending")
-    if pending:
+    for field, role in _USER_ROLES:
+        pending = payload.get(f"{field}_pending")
+        if not pending:
+            continue
+        if field == "reporter" and not _can_modify_reporter(
+            client, payload.get("project") or cfg.jira.default_project
+        ):
+            return 2
         try:
-            acc, label = _resolve_user(pending, client, role="담당자")
+            acc, label = _resolve_user(pending, client, role=role)
         except _ResolveError as exc:
             sys.stderr.write(f"{exc}\n")
             return 2
-        del payload["assignee_pending"]
-        payload["assignee"] = acc
-        payload["assignee_label"] = label
-        sys.stderr.write(f"[담당자] {pending} → {label}\n")
-
-    reporter_pending = payload.get("reporter_pending")
-    if reporter_pending:
-        if not _can_modify_reporter(client, payload.get("project") or cfg.jira.default_project):
-            return 2
-        try:
-            acc, label = _resolve_user(reporter_pending, client, role="보고자")
-        except _ResolveError as exc:
-            sys.stderr.write(f"{exc}\n")
-            return 2
-        del payload["reporter_pending"]
-        payload["reporter"] = acc
-        payload["reporter_label"] = label
-        sys.stderr.write(f"[보고자] {reporter_pending} → {label}\n")
+        del payload[f"{field}_pending"]
+        payload[field] = acc
+        payload[f"{field}_label"] = label
+        sys.stderr.write(f"[{role}] {pending} → {label}\n")
     return None
 
 
@@ -433,9 +429,11 @@ def _edit_round(payload: dict[str, Any], cfg: TakoConfig) -> dict[str, Any] | No
         return candidate
 
 
-def cmd_new(args: Any, cfg: TakoConfig) -> int:
-    client = build_client(cfg, args.credentials)
+def _prefilled_from_args(args: Any) -> dict[str, Any]:
+    """tako new 의 내용 인자 → 값이 주어진 것만 담은 payload 조각.
 
+    issue_type 외의 키가 하나라도 있으면 --draft-file 과 충돌로 본다.
+    """
     prefilled: dict[str, Any] = {}
     if args.project:
         prefilled["project"] = args.project
@@ -459,21 +457,33 @@ def cmd_new(args: Any, cfg: TakoConfig) -> int:
         prefilled["duedate"] = args.duedate
     if args.link:
         prefilled["links"] = list(args.link)
+    return prefilled
+
+
+def _payload_with_defaults(prefilled: dict[str, Any], cfg: TakoConfig) -> dict[str, Any]:
+    """질문 없이 인자만으로 가는 경로(--edit 시작점, 완전 자동 모드)의 config 기본값 채우기.
+
+    부모 별칭 해석, --assignee 미지정 시 config.default_assignee 적용까지.
+    """
+    payload = dict(prefilled)
+    payload.setdefault("project", cfg.jira.default_project)
+    payload.setdefault("issue_type", cfg.jira.default_issue_type)
+    if "parent_epic" in payload:
+        payload["parent_epic"] = cfg.resolve_epic(payload["parent_epic"])
+    if "assignee_pending" not in payload and cfg.jira.default_assignee:
+        payload["assignee_pending"] = cfg.jira.default_assignee
+    return payload
+
+
+def cmd_new(args: Any, cfg: TakoConfig) -> int:
+    client = build_client(cfg, args.credentials)
+
+    prefilled = _prefilled_from_args(args)
 
     if args.draft_file:
         # 파일이 내용 전체를 가진다 — 내용 인자와 섞이면 어느 쪽이 이기는지
         # 모호해지므로 금지. 파일에 못 싣는 --issue-type 만 예외.
-        conflicting = (
-            args.project, args.summary, args.parent,
-            args.assignee, args.reporter, args.duedate,
-        )
-        if (
-            any(conflicting)
-            or args.description is not None
-            or args.label
-            or args.link
-            or args.story_points is not None
-        ):
+        if prefilled.keys() - {"issue_type"}:
             sys.stderr.write("--draft-file 은 내용 인자(--summary 등)와 같이 못 씀. --issue-type 만 예외.\n")
             return 2
         if not stdin_is_tty() and not args.yes:
@@ -496,15 +506,9 @@ def cmd_new(args: Any, cfg: TakoConfig) -> int:
             sys.stderr.write("--edit 는 TTY 필요. 비대화형은 --draft-file 사용.\n")
             return 2
         # 질문 릴레이 대신 처음부터 에디터로. 빈 필수 항목은 검증이 잡아 다시 연다.
-        payload = dict(prefilled)
-        payload.setdefault("project", cfg.jira.default_project)
-        payload.setdefault("issue_type", cfg.jira.default_issue_type)
+        payload = _payload_with_defaults(prefilled, cfg)
         payload.setdefault("summary", "")
         payload.setdefault("description", "")
-        if "parent_epic" in payload:
-            payload["parent_epic"] = cfg.resolve_epic(payload["parent_epic"])
-        if "assignee_pending" not in payload and cfg.jira.default_assignee:
-            payload["assignee_pending"] = cfg.jira.default_assignee
         edited = _edit_round(payload, cfg)
         if edited is None:
             sys.stderr.write("취소.\n")
@@ -522,14 +526,7 @@ def cmd_new(args: Any, cfg: TakoConfig) -> int:
             payload = _collect_interactively(cfg, prefilled=prefilled)
         else:
             # 완전 자동 모드: prefilled 만으로 draft. optional 항목 묻지 않음.
-            payload = dict(prefilled)
-            payload.setdefault("project", cfg.jira.default_project)
-            payload.setdefault("issue_type", cfg.jira.default_issue_type)
-            if "parent_epic" in payload:
-                payload["parent_epic"] = cfg.resolve_epic(payload["parent_epic"])
-            # --assignee 미지정 시 config.default_assignee 적용
-            if "assignee_pending" not in payload and cfg.jira.default_assignee:
-                payload["assignee_pending"] = cfg.jira.default_assignee
+            payload = _payload_with_defaults(prefilled, cfg)
 
     # 어느 입력 경로로 왔든 로컬에서 걸러야 Jira 400 왕복을 아낀다.
     _ensure_issue_type_allowed(cfg, payload["issue_type"])

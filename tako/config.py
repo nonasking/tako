@@ -10,14 +10,20 @@ from typing import Any
 
 import yaml
 
+from .paths import DEFAULT_TAKO_DIR, resolve_override_path
 
-DEFAULT_CONFIG_PATH = Path.home() / ".config" / "tako" / "config.yaml"
+
+DEFAULT_CONFIG_PATH = DEFAULT_TAKO_DIR / "config.yaml"
 ENV_OVERRIDE_VAR = "TAKO_CONFIG_PATH"
 TOKEN_PAGE_URL = "https://id.atlassian.com/manage-profile/security/api-tokens"
 
 
 class ConfigError(Exception):
     pass
+
+
+class ConfigNotFoundError(ConfigError):
+    """설정 파일 자체가 없음 — 첫 실행. 호출자가 init 제안으로 분기한다."""
 
 
 @dataclass(frozen=True)
@@ -61,18 +67,13 @@ class TakoConfig:
 
 
 def resolve_config_path(explicit: str | os.PathLike[str] | None = None) -> Path:
-    if explicit:
-        return Path(explicit).expanduser()
-    env_value = os.environ.get(ENV_OVERRIDE_VAR)
-    if env_value:
-        return Path(env_value).expanduser()
-    return DEFAULT_CONFIG_PATH
+    return resolve_override_path(explicit, env_var=ENV_OVERRIDE_VAR, default=DEFAULT_CONFIG_PATH)
 
 
 def load_config(path: str | os.PathLike[str] | None = None) -> TakoConfig:
     target = resolve_config_path(path)
     if not target.exists():
-        raise ConfigError(f"설정 파일이 없습니다: {target}\n`tako init` 또는 수동 작성 필요.")
+        raise ConfigNotFoundError(f"설정 파일이 없습니다: {target}\n`tako init` 또는 수동 작성 필요.")
     try:
         raw = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as exc:

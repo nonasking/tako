@@ -18,6 +18,8 @@ import io
 import unicodedata
 from typing import Any
 
+from .patterns import browse_url
+
 
 # SP 매핑 유무에 따라 동적으로 결정 (issues_to_csv 에서 처리)
 _BASE_COLUMNS = ("key", "status", "type", "assignee", "reporter", "created", "updated", "duedate", "summary", "parent", "url")
@@ -73,9 +75,14 @@ def issues_to_csv(
     return buf.getvalue()
 
 
+def _char_width(ch: str) -> int:
+    """한 글자의 터미널 칸 수 — 한글 등 동아시아 전각(W/F)은 2칸."""
+    return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+
+
 def display_width(text: str) -> int:
-    """터미널 표시 폭 — 한글 등 동아시아 전각(W/F)은 2칸."""
-    return sum(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in text)
+    """터미널 표시 폭 (칸 수)."""
+    return sum(_char_width(ch) for ch in text)
 
 
 def _fit(cell: str, width: int) -> str:
@@ -83,7 +90,7 @@ def _fit(cell: str, width: int) -> str:
     out: list[str] = []
     used = 0
     for ch in cell:
-        w = 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+        w = _char_width(ch)
         if used + w > width:
             break
         out.append(ch)
@@ -130,10 +137,6 @@ def render_list_table(
 
     divider = tuple("-" * (w - 2) for w in widths)
     return "\n".join([line(header), line(divider)] + [line(r) for r in rows])
-
-
-def browse_url(site: str, key: str) -> str:
-    return f"https://{site}/browse/{key}"
 
 
 def browse_urls(issues: list[dict[str, Any]], site: str) -> list[str]:

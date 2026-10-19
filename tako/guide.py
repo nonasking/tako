@@ -11,8 +11,10 @@ import os
 from importlib import resources
 from pathlib import Path
 
+from .paths import DEFAULT_TAKO_DIR, resolve_override_path
 
-DEFAULT_GUIDE_PATH = Path.home() / ".config" / "tako" / "body_guide.md"
+
+DEFAULT_GUIDE_PATH = DEFAULT_TAKO_DIR / "body_guide.md"
 ENV_OVERRIDE_VAR = "TAKO_GUIDE_PATH"
 _PACKAGED_DEFAULT = "templates/body_guide.md"
 
@@ -22,12 +24,7 @@ class GuideError(Exception):
 
 
 def resolve_guide_path(explicit: str | os.PathLike[str] | None = None) -> Path:
-    if explicit:
-        return Path(explicit).expanduser()
-    env_value = os.environ.get(ENV_OVERRIDE_VAR)
-    if env_value:
-        return Path(env_value).expanduser()
-    return DEFAULT_GUIDE_PATH
+    return resolve_override_path(explicit, env_var=ENV_OVERRIDE_VAR, default=DEFAULT_GUIDE_PATH)
 
 
 def default_guide_text() -> str:
