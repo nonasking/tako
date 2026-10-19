@@ -10,8 +10,10 @@ from typing import Any
 
 import yaml
 
+from .paths import TAKO_HOME, resolve_override_path
 
-DEFAULT_CONFIG_PATH = Path.home() / ".config" / "tako" / "config.yaml"
+
+DEFAULT_CONFIG_PATH = TAKO_HOME / "config.yaml"
 ENV_OVERRIDE_VAR = "TAKO_CONFIG_PATH"
 TOKEN_PAGE_URL = "https://id.atlassian.com/manage-profile/security/api-tokens"
 
@@ -65,12 +67,7 @@ class TakoConfig:
 
 
 def resolve_config_path(explicit: str | os.PathLike[str] | None = None) -> Path:
-    if explicit:
-        return Path(explicit).expanduser()
-    env_value = os.environ.get(ENV_OVERRIDE_VAR)
-    if env_value:
-        return Path(env_value).expanduser()
-    return DEFAULT_CONFIG_PATH
+    return resolve_override_path(explicit, env_var=ENV_OVERRIDE_VAR, default=DEFAULT_CONFIG_PATH)
 
 
 def load_config(path: str | os.PathLike[str] | None = None) -> TakoConfig:

@@ -15,6 +15,8 @@ import os
 from importlib import resources
 from pathlib import Path
 
+from .paths import resolve_override_path
+
 
 DEFAULT_COMMANDS_DIR = Path.home() / ".claude" / "commands"
 ENV_OVERRIDE_VAR = "TAKO_COMMANDS_DIR"
@@ -26,12 +28,7 @@ class SlashError(Exception):
 
 
 def resolve_commands_dir(explicit: str | os.PathLike[str] | None = None) -> Path:
-    if explicit:
-        return Path(explicit).expanduser()
-    env_value = os.environ.get(ENV_OVERRIDE_VAR)
-    if env_value:
-        return Path(env_value).expanduser()
-    return DEFAULT_COMMANDS_DIR
+    return resolve_override_path(explicit, env_var=ENV_OVERRIDE_VAR, default=DEFAULT_COMMANDS_DIR)
 
 
 def packaged_commands() -> list[tuple[str, str]]:

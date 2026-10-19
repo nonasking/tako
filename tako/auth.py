@@ -11,8 +11,10 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from .paths import TAKO_HOME, resolve_override_path
 
-DEFAULT_CREDENTIALS_PATH = Path.home() / ".config" / "tako" / "credentials.json"
+
+DEFAULT_CREDENTIALS_PATH = TAKO_HOME / "credentials.json"
 ENV_OVERRIDE_VAR = "TAKO_CREDENTIALS_PATH"
 
 
@@ -30,12 +32,7 @@ class Credentials:
 
 
 def resolve_credentials_path(explicit: str | os.PathLike[str] | None = None) -> Path:
-    if explicit:
-        return Path(explicit).expanduser()
-    env_value = os.environ.get(ENV_OVERRIDE_VAR)
-    if env_value:
-        return Path(env_value).expanduser()
-    return DEFAULT_CREDENTIALS_PATH
+    return resolve_override_path(explicit, env_var=ENV_OVERRIDE_VAR, default=DEFAULT_CREDENTIALS_PATH)
 
 
 def load_credentials(path: str | os.PathLike[str] | None = None) -> Credentials:
