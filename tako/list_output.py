@@ -75,9 +75,14 @@ def issues_to_csv(
     return buf.getvalue()
 
 
+def _char_width(ch: str) -> int:
+    """한 글자의 터미널 칸 수 — 한글 등 동아시아 전각(W/F)은 2칸."""
+    return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+
+
 def display_width(text: str) -> int:
-    """터미널 표시 폭 — 한글 등 동아시아 전각(W/F)은 2칸."""
-    return sum(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in text)
+    """터미널 표시 폭 (칸 수)."""
+    return sum(_char_width(ch) for ch in text)
 
 
 def _fit(cell: str, width: int) -> str:
@@ -85,7 +90,7 @@ def _fit(cell: str, width: int) -> str:
     out: list[str] = []
     used = 0
     for ch in cell:
-        w = 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+        w = _char_width(ch)
         if used + w > width:
             break
         out.append(ch)

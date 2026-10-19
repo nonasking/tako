@@ -45,6 +45,16 @@ def _parse_link_item(item: Any) -> tuple[str, str]:
     return target, type_name.strip()
 
 
+def _optional_str(data: dict[str, Any], key: str) -> str | None:
+    """선택 문자열 필드 — 없거나 공백뿐이면 None, 문자열이 아니면 DraftError."""
+    value = data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise DraftError(f"{key} 는 문자열이어야 함.")
+    return value.strip() or None
+
+
 @dataclass(frozen=True)
 class IssueDraft:
     project: str
@@ -82,23 +92,11 @@ class IssueDraft:
                 # Jira 는 공백 포함 라벨을 400 으로 거부 — 로컬에서 미리 걸러 왕복을 아낀다.
                 raise DraftError(f"라벨에 공백 불가: {label!r} (예: 'needs-review')")
 
-        parent = data.get("parent_epic")
-        if parent is not None and not isinstance(parent, str):
-            raise DraftError("parent_epic 는 문자열이어야 함.")
-
-        assignee = data.get("assignee")
-        if assignee is not None and not isinstance(assignee, str):
-            raise DraftError("assignee 는 문자열이어야 함.")
-        assignee_label = data.get("assignee_label")
-        if assignee_label is not None and not isinstance(assignee_label, str):
-            raise DraftError("assignee_label 는 문자열이어야 함.")
-
-        reporter = data.get("reporter")
-        if reporter is not None and not isinstance(reporter, str):
-            raise DraftError("reporter 는 문자열이어야 함.")
-        reporter_label = data.get("reporter_label")
-        if reporter_label is not None and not isinstance(reporter_label, str):
-            raise DraftError("reporter_label 는 문자열이어야 함.")
+        parent = _optional_str(data, "parent_epic")
+        assignee = _optional_str(data, "assignee")
+        assignee_label = _optional_str(data, "assignee_label")
+        reporter = _optional_str(data, "reporter")
+        reporter_label = _optional_str(data, "reporter_label")
 
         sp_raw = data.get("story_points")
         story_points: int | None = None
@@ -130,12 +128,12 @@ class IssueDraft:
             issue_type=data["issue_type"].strip(),
             summary=data["summary"].strip(),
             description=data["description"],
-            parent_epic=(parent.strip() if parent else None) or None,
+            parent_epic=parent,
             labels=tuple(label.strip() for label in labels_raw if label.strip()),
-            assignee=(assignee.strip() if assignee else None) or None,
-            assignee_label=(assignee_label.strip() if assignee_label else None) or None,
-            reporter=(reporter.strip() if reporter else None) or None,
-            reporter_label=(reporter_label.strip() if reporter_label else None) or None,
+            assignee=assignee,
+            assignee_label=assignee_label,
+            reporter=reporter,
+            reporter_label=reporter_label,
             story_points=story_points,
             duedate=duedate,
             links=tuple(links),
