@@ -13,7 +13,7 @@ flowchart TD
     SLASH["Claude Code slash commands<br/>/tako · /tako-read · /tako-check · /tako-update · /tako-retype · /tako-list · /tako-guide<br/>(LLM drafts title + body from session context)"]
     SHELL["shell<br/>tako new · list · show · update · retype · fields · guide · slash · init"]
     SLASH -->|"builds the shell call"| SHELL
-    SHELL --> MAIN["main.py — argparse dispatcher (run)<br/>cmd_new · cmd_list · cmd_edit · cmd_show (+ cmd_common)"]
+    SHELL --> MAIN["main.py — argparse dispatcher (run)<br/>cmd_new · cmd_list · cmd_edit · cmd_show · cmd_fields (+ cmd_common)"]
 
     MAIN --> CFG["config.py<br/>~/.config/tako/config.yaml<br/>site · default project · issue types · field IDs · epic aliases"]
     MAIN --> AUTH["auth.py<br/>~/.config/tako/credentials.json (chmod 0600)"]
@@ -440,12 +440,13 @@ tako/
 │   │   ├── tako-retype.md   /tako-retype (change issue type)
 │   │   ├── tako-list.md     /tako-list (list)
 │   │   └── tako-guide.md    /tako-guide (customize body guide)
-│   ├── main.py              entry point — argparse + dispatch (init / guide / fields / slash stay here)
+│   ├── main.py              entry point — argparse + dispatch (init / guide / slash stay here)
 │   ├── cmd_common.py        shared subcommand helpers (config/creds → client, KST stamps)
 │   ├── cmd_new.py           new / preview / build / interactive (create family)
 │   ├── cmd_list.py          list — filters → JQL → pagination → text/csv/json
 │   ├── cmd_edit.py          update / retype (edit family)
 │   ├── cmd_show.py          show (single-issue view)
+│   ├── cmd_fields.py        fields set / detect (custom field mapping)
 │   ├── auth.py              credentials loader
 │   ├── config.py            settings + init wizard
 │   ├── jira_client.py       REST client (session reuse, retry policy) + md→ADF entry
@@ -453,7 +454,8 @@ tako/
 │   ├── issue_draft.py       payload builder + preview
 │   ├── list_query.py        list filters → JQL clauses
 │   ├── list_output.py       list formatters — CSV / width-aware text table
-│   ├── patterns.py          shared issue-key / accountId patterns
+│   ├── patterns.py          shared issue-key / browse-URL / accountId / "me" patterns
+│   ├── paths.py             path resolution rule (explicit > env var > default)
 │   ├── fields.py            custom field mapping helper
 │   ├── prompts.py           interactive input (EOF-safe)
 │   ├── guide.py             body-guide load/create
@@ -478,7 +480,7 @@ python -m unittest discover -s tests -v    # all
 python -m unittest tests.test_list_query   # a single module
 ```
 
-Covers the pure logic: JQL building (`test_list_query.py` — shorthand/comparison/range dates, due, story points, escaping), config validation messages (`test_config.py`), REST error mapping, the retry policy, and the ADF conversion boundary (`test_jira_client.py`), list pagination / filter assembly / shell hints (`test_cmd_list.py`), CSV and width-aware table formatting (`test_list_output.py`), prompt EOF handling (`test_prompts.py`), issue-type matching for `retype` (`test_retype.py`), the body guide (`test_guide.py`), the sub-task/link lines of `show` (`test_show_render.py`), the reporter path — payload, preview, and the permission pre-check (`test_reporter.py`), and `--output` path handling — never overwrite, timestamp placement, parent-dir creation (`test_list_output_path.py`). Two more guard the install path: the first-run contract — never prompt when stdin isn't a TTY, and never point at a file only a repo checkout would have (`test_first_run.py`), and slash-command installation — packaging completeness, skip-unless-forced, dangling-symlink repair (`test_slash.py`).
+Covers the pure logic: JQL building (`test_list_query.py` — shorthand/comparison/range dates, due, story points, escaping), config validation messages (`test_config.py`), REST error mapping, the retry policy, and the ADF conversion boundary (`test_jira_client.py`), list pagination / filter assembly / shell hints (`test_cmd_list.py`), CSV and width-aware table formatting (`test_list_output.py`), prompt EOF handling (`test_prompts.py`), issue-type matching for `retype` (`test_retype.py`), the body guide (`test_guide.py`), the sub-task/link lines of `show` (`test_show_render.py`), the reporter path — payload, preview, and the permission pre-check (`test_reporter.py`), the `new` flow — arg → payload assembly, `--draft-file` conflicts, assignee/reporter resolution order (`test_cmd_new.py`), and `--output` path handling — never overwrite, timestamp placement, parent-dir creation (`test_list_output_path.py`). Two more guard the install path: the first-run contract — never prompt when stdin isn't a TTY, and never point at a file only a repo checkout would have (`test_first_run.py`), and slash-command installation — packaging completeness, skip-unless-forced, dangling-symlink repair (`test_slash.py`).
 
 ## Releasing
 
