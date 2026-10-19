@@ -10,10 +10,10 @@ from typing import Any
 
 import yaml
 
-from .paths import TAKO_HOME, resolve_override_path
+from .paths import DEFAULT_TAKO_DIR, resolve_override_path
 
 
-DEFAULT_CONFIG_PATH = TAKO_HOME / "config.yaml"
+DEFAULT_CONFIG_PATH = DEFAULT_TAKO_DIR / "config.yaml"
 ENV_OVERRIDE_VAR = "TAKO_CONFIG_PATH"
 TOKEN_PAGE_URL = "https://id.atlassian.com/manage-profile/security/api-tokens"
 

@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 # tako 전용 파일(config / credentials / body_guide)이 모이는 디렉터리
-TAKO_HOME = Path.home() / ".config" / "tako"
+DEFAULT_TAKO_DIR = Path.home() / ".config" / "tako"
 
 
 def resolve_override_path(

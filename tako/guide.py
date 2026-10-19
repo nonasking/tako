@@ -11,10 +11,10 @@ import os
 from importlib import resources
 from pathlib import Path
 
-from .paths import TAKO_HOME, resolve_override_path
+from .paths import DEFAULT_TAKO_DIR, resolve_override_path
 
 
-DEFAULT_GUIDE_PATH = TAKO_HOME / "body_guide.md"
+DEFAULT_GUIDE_PATH = DEFAULT_TAKO_DIR / "body_guide.md"
 ENV_OVERRIDE_VAR = "TAKO_GUIDE_PATH"
 _PACKAGED_DEFAULT = "templates/body_guide.md"
 

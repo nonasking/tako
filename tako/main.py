@@ -6,7 +6,7 @@
   cmd_edit    update / retype (수정 계열)
   cmd_show    show (조회)
   cmd_fields  fields set / detect (custom field 매핑)
-여기 남는 것: 파서, init / guide / slash (config 를 안 타는 얇은 커맨드), run.
+여기 남는 것: 파서, init / guide / slash (config 를 로드하지 않는 얇은 커맨드), run.
 """
 
 from __future__ import annotations

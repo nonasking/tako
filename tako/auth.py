@@ -11,10 +11,10 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from .paths import TAKO_HOME, resolve_override_path
+from .paths import DEFAULT_TAKO_DIR, resolve_override_path
 
 
-DEFAULT_CREDENTIALS_PATH = TAKO_HOME / "credentials.json"
+DEFAULT_CREDENTIALS_PATH = DEFAULT_TAKO_DIR / "credentials.json"
 ENV_OVERRIDE_VAR = "TAKO_CREDENTIALS_PATH"
 
 

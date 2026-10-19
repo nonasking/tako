@@ -203,7 +203,7 @@ def cmd_interactive(cfg: TakoConfig) -> int:
     return 0
 
 
-# (payload 키, 사용자 대면 이름). 해석 순서도 이 순서 — 담당자 오류가 먼저 보인다.
+# (payload 필드, 사용자 대면 역할 이름 — _resolve_user 의 role). 해석 순서도 이 순서 — 담당자 오류가 먼저 보인다.
 _USER_ROLES = (("assignee", "담당자"), ("reporter", "보고자"))
 
 
@@ -316,23 +316,23 @@ def _apply_pendings(payload: dict[str, Any], client: JiraSiteClient, cfg: TakoCo
     실패해도 pending 키는 남겨 둔다 — 편집기 라운드가 사용자가 넣은
     원래 입력을 그대로 다시 보여줄 수 있어야 한다.
     """
-    for role, role_name in _USER_ROLES:
-        pending = payload.get(f"{role}_pending")
+    for field, role in _USER_ROLES:
+        pending = payload.get(f"{field}_pending")
         if not pending:
             continue
-        if role == "reporter" and not _can_modify_reporter(
+        if field == "reporter" and not _can_modify_reporter(
             client, payload.get("project") or cfg.jira.default_project
         ):
             return 2
         try:
-            acc, label = _resolve_user(pending, client, role=role_name)
+            acc, label = _resolve_user(pending, client, role=role)
         except _ResolveError as exc:
             sys.stderr.write(f"{exc}\n")
             return 2
-        del payload[f"{role}_pending"]
-        payload[role] = acc
-        payload[f"{role}_label"] = label
-        sys.stderr.write(f"[{role_name}] {pending} → {label}\n")
+        del payload[f"{field}_pending"]
+        payload[field] = acc
+        payload[f"{field}_label"] = label
+        sys.stderr.write(f"[{role}] {pending} → {label}\n")
     return None
 
 
