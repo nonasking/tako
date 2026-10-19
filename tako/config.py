@@ -20,6 +20,10 @@ class ConfigError(Exception):
     pass
 
 
+class ConfigNotFoundError(ConfigError):
+    """설정 파일 자체가 없음 — 첫 실행. 호출자가 init 제안으로 분기한다."""
+
+
 @dataclass(frozen=True)
 class JiraSite:
     site: str
@@ -72,7 +76,7 @@ def resolve_config_path(explicit: str | os.PathLike[str] | None = None) -> Path:
 def load_config(path: str | os.PathLike[str] | None = None) -> TakoConfig:
     target = resolve_config_path(path)
     if not target.exists():
-        raise ConfigError(f"설정 파일이 없습니다: {target}\n`tako init` 또는 수동 작성 필요.")
+        raise ConfigNotFoundError(f"설정 파일이 없습니다: {target}\n`tako init` 또는 수동 작성 필요.")
     try:
         raw = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as exc:
