@@ -6,6 +6,7 @@ detect 는 사이트 필드 목록을 REST 로 받아 후보를 고르고, --sav
 
 from __future__ import annotations
 
+import shlex
 import sys
 from typing import Any
 
@@ -92,11 +93,14 @@ def cmd_fields_detect(args: Any, cfg: TakoConfig) -> int:
             return 2
         sys.stderr.write(f"\n등록 완료: jira.fields.{args.name} = {chosen_id}\n")
     else:
+        # --config 로 다른 파일을 쓰고 있으면 안내 경로와 재실행 명령도 그 파일을 가리켜야 한다.
+        # 빠뜨리면 사용자가 힌트대로 쳤을 때 기본 경로 config 에 써진다.
+        config_opt = f"--config {shlex.quote(args.config)} " if args.config else ""
         sys.stderr.write(
-            f"\n다음을 ~/.config/tako/config.yaml 의 jira 블록에 추가하세요:\n\n"
+            f"\n다음을 {resolve_config_path(args.config)} 의 jira 블록에 추가하세요:\n\n"
             f"  fields:\n    {args.name}: {chosen_id}\n\n"
-            f"또는 자동 등록: tako fields set {args.name} {chosen_id}\n"
-            f"또는 한 번에:   tako fields detect {args.name} --save\n"
+            f"또는 자동 등록: tako {config_opt}fields set {args.name} {chosen_id}\n"
+            f"또는 한 번에:   tako {config_opt}fields detect {args.name} --save\n"
         )
 
     print(chosen_id)
