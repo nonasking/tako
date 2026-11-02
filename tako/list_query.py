@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import datetime as _dt
 import re
 from dataclasses import dataclass
 
@@ -117,16 +118,25 @@ def _date_clause(field: str, value: str) -> str:
     범위는 절대 날짜끼리만. 단축형('7d') 과 섞을 수 없음.
     """
     value = value.strip()
-    range_clause = _date_range_clause(field, value)
+    range_clause = _date_range_clause(field, value, datetime_field=True)
     if range_clause is not None:
         return range_clause
-    if _UPDATED_SHORTHAND.match(value):
-        return f"{field} >= -{value}"
+    short = _UPDATED_SHORTHAND.match(value)
+    if short:
+        # JQL 상대 시간에서 소문자 m은 분(minute)이다. 도움말의 '1m'은 한 달 뜻이므로 M으로 바꾼다.
+        amount, unit = short.groups()
+        return f"{field} >= -{amount}{'M' if unit == 'm' else unit}"
     if _DATE_ONLY.match(value):
         return f'{field} >= "{value}"'
     m = _DATE_WITH_OP.match(value)
     if m:
-        return f'{field} {m.group(1)} "{m.group(2)}"'
+        op, day = m.groups()
+        # datetime 필드라 날짜 하루 전체를 포함/제외하도록 경계를 다음 날 00:00으로 옮긴다.
+        if op == "<=":
+            return f'{field} < "{_next_day(day)}"'
+        if op == ">":
+            return f'{field} >= "{_next_day(day)}"'
+        return f'{field} {op} "{day}"'
     raise QueryError(
         f"{field} 값 형식 미지원: {value!r}\n"
         "  지원: '7d'/'24h'/'2w'/'1m' 단축, 'YYYY-MM-DD', '<=YYYY-MM-DD'/'>=YYYY-MM-DD'/'<YYYY-MM-DD'/'>YYYY-MM-DD',\n"
@@ -141,8 +151,16 @@ _SP_WITH_OP = re.compile(r"^(<=|>=|<|>)\s*(-?\d+)$")
 _DATE_RANGE = re.compile(r"^(\d{4}-\d{2}-\d{2})\s*(?:\.\.|~)\s*(\d{4}-\d{2}-\d{2})$")
 
 
-def _date_range_clause(field: str, value: str) -> str | None:
-    """범위 표현이면 inclusive JQL 절, 아니면 None."""
+def _next_day(day: str) -> str:
+    return (_dt.date.fromisoformat(day) + _dt.timedelta(days=1)).isoformat()
+
+
+def _date_range_clause(field: str, value: str, *, datetime_field: bool = False) -> str | None:
+    """범위 표현이면 inclusive JQL 절, 아니면 None.
+
+    created/updated 같은 datetime 필드에서 `<= "2026-03-31"`은 31일 00:00까지만
+    잡아 끝 날짜 하루가 빠진다. 그래서 datetime 필드는 `< 끝날짜+1일`로 쓴다.
+    """
     m = _DATE_RANGE.match(value)
     if not m:
         return None
@@ -151,6 +169,8 @@ def _date_range_clause(field: str, value: str) -> str | None:
         raise QueryError(
             f"{field} 범위의 시작이 끝보다 늦음: {start} > {end}"
         )
+    if datetime_field:
+        return f'{field} >= "{start}" AND {field} < "{_next_day(end)}"'
     return f'{field} >= "{start}" AND {field} <= "{end}"'
 
 
