@@ -48,6 +48,12 @@ class NormalizeSiteTest(unittest.TestCase):
                 self.assertEqual(normalize_site(raw), "mycompany.atlassian.net")
 
 
+class NormalizeSiteEmptyTest(unittest.TestCase):
+    def test_scheme_only_yields_empty(self) -> None:
+        self.assertEqual(normalize_site("https://"), "")
+
+
+@unittest.skipIf(os.name == "nt", "POSIX 권한 비트는 Windows에서 의미가 없다")
 class WriteCredentialsModeTest(unittest.TestCase):
     def test_new_file_created_0600(self) -> None:
         with tempfile.TemporaryDirectory() as d:
@@ -92,3 +98,65 @@ class ReadTimeoutRetryTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CmdUpdateWiringTest(unittest.TestCase):
+    """cmd_update가 실제로 PUT하는 description을 확인한다."""
+
+    EXISTING_ADF = {
+        "version": 1,
+        "type": "doc",
+        "content": [
+            {"type": "table", "content": [{"type": "tableRow", "content": []}]},
+            {"type": "taskList", "attrs": {"localId": "t1"}, "content": []},
+        ],
+    }
+
+    class _Client:
+        def __init__(self, description):
+            self.description = description
+            self.sent = None
+
+        def get_issue(self, key, fields=None):
+            return {"key": key, "fields": {"summary": "제목", "description": self.description}}
+
+        def update_issue_fields(self, key, fields):
+            self.sent = fields
+
+    def _run(self, client, **over):
+        import argparse
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+        from unittest.mock import patch
+
+        from tako.cmd_edit import cmd_update
+        from tests.test_cmd_new import _cfg
+
+        args = argparse.Namespace(
+            key="WL-1", summary=None, body="새 내용", mode="append", section="작업 결과",
+            yes=True, credentials=None,
+        )
+        for k, v in over.items():
+            setattr(args, k, v)
+        with patch("tako.cmd_edit.build_client", return_value=client), \
+                redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            return cmd_update(args, _cfg())
+
+    def test_append_keeps_existing_adf_nodes(self) -> None:
+        client = self._Client(self.EXISTING_ADF)
+        self.assertEqual(self._run(client), 0)
+        content = client.sent["description"]["content"]
+        self.assertEqual(content[:2], self.EXISTING_ADF["content"])
+        self.assertGreater(len(content), 2)
+
+    def test_overwrite_replaces_body(self) -> None:
+        client = self._Client(self.EXISTING_ADF)
+        self.assertEqual(self._run(client, mode="overwrite"), 0)
+        types = [n["type"] for n in client.sent["description"]["content"]]
+        self.assertNotIn("table", types)
+        self.assertNotIn("taskList", types)
+
+    def test_summary_only_leaves_description_alone(self) -> None:
+        client = self._Client(self.EXISTING_ADF)
+        self.assertEqual(self._run(client, body=None, summary="새 제목"), 0)
+        self.assertEqual(client.sent, {"summary": "새 제목"})

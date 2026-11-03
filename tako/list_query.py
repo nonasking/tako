@@ -105,14 +105,18 @@ def _date_clause(field: str, value: str) -> str:
     """단순 표현 → JQL 절.
 
     지원:
-      7d / 24h / 2w / 1m            → <field> >= -<단축>   (지난 N 단위)
+      7d / 24h / 2w                 → <field> >= -<단축>   (지난 N 단위)
+      1m                            → <field> >= startOfDay(-1M)  (지난 N개월, 그 날 00:00부터)
       YYYY-MM-DD                    → <field> >= "..."     (그 날짜 이후)
-      <=YYYY-MM-DD                  → <field> <= "..."
+      <=YYYY-MM-DD                  → <field> < "다음 날"   (그 날 하루 포함)
       <YYYY-MM-DD                   → <field> < "..."
       >=YYYY-MM-DD                  → <field> >= "..."
-      >YYYY-MM-DD                   → <field> > "..."
-      YYYY-MM-DD..YYYY-MM-DD        → <field> >= A AND <field> <= B  (inclusive)
+      >YYYY-MM-DD                   → <field> >= "다음 날"  (그 날 하루 제외)
+      YYYY-MM-DD..YYYY-MM-DD        → <field> >= A AND <field> < B+1일  (양 끝 포함)
       YYYY-MM-DD~YYYY-MM-DD         → 동상 (alias)
+
+    created/updated는 datetime 필드라 날짜만 쓰면 그 날 00:00을 뜻한다. 그래서 끝 날짜를
+    포함하려면 다음 날 00:00 미만으로 써야 한다. 달력에 없는 날짜는 QueryError.
 
     비교 연산자 형식은 `--due` 와 동일 — stale 티켓 쿼리(`updated <= "..."`) 가능.
     범위는 절대 날짜끼리만. 단축형('7d') 과 섞을 수 없음.
@@ -123,14 +127,19 @@ def _date_clause(field: str, value: str) -> str:
         return range_clause
     short = _UPDATED_SHORTHAND.match(value)
     if short:
-        # JQL 상대 시간에서 소문자 m은 분(minute)이다. 도움말의 '1m'은 한 달 뜻이므로 M으로 바꾼다.
         amount, unit = short.groups()
-        return f"{field} >= -{amount}{'M' if unit == 'm' else unit}"
+        if unit == "m":
+            # JQL 날짜 리터럴의 상대 단위는 w/d/h/m(분)뿐이라 '-1m'은 1분 전이다.
+            # 도움말의 '1m'은 한 달 뜻이므로, 월 단위가 문서화된 함수 인자 문법을 쓴다.
+            return f"{field} >= startOfDay(-{amount}M)"
+        return f"{field} >= -{value}"
     if _DATE_ONLY.match(value):
+        _parse_day(value)
         return f'{field} >= "{value}"'
     m = _DATE_WITH_OP.match(value)
     if m:
         op, day = m.groups()
+        _parse_day(day)
         # datetime 필드라 날짜 하루 전체를 포함/제외하도록 경계를 다음 날 00:00으로 옮긴다.
         if op == "<=":
             return f'{field} < "{_next_day(day)}"'
@@ -151,8 +160,16 @@ _SP_WITH_OP = re.compile(r"^(<=|>=|<|>)\s*(-?\d+)$")
 _DATE_RANGE = re.compile(r"^(\d{4}-\d{2}-\d{2})\s*(?:\.\.|~)\s*(\d{4}-\d{2}-\d{2})$")
 
 
+def _parse_day(day: str) -> _dt.date:
+    """정규식은 통과하지만 달력에 없는 날짜(2026-02-30, 2026-13-01)를 QueryError로."""
+    try:
+        return _dt.date.fromisoformat(day)
+    except ValueError:
+        raise QueryError(f"없는 날짜: {day!r} (YYYY-MM-DD, 실제 달력 날짜만)") from None
+
+
 def _next_day(day: str) -> str:
-    return (_dt.date.fromisoformat(day) + _dt.timedelta(days=1)).isoformat()
+    return (_parse_day(day) + _dt.timedelta(days=1)).isoformat()
 
 
 def _date_range_clause(field: str, value: str, *, datetime_field: bool = False) -> str | None:
@@ -165,6 +182,8 @@ def _date_range_clause(field: str, value: str, *, datetime_field: bool = False) 
     if not m:
         return None
     start, end = m.group(1), m.group(2)
+    _parse_day(start)
+    _parse_day(end)
     if start > end:
         raise QueryError(
             f"{field} 범위의 시작이 끝보다 늦음: {start} > {end}"

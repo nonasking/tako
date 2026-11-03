@@ -101,6 +101,8 @@ def _build_config(raw: dict[str, Any]) -> TakoConfig:
         raise ConfigError("jira 블록 누락 또는 형식 틀림.")
 
     site = normalize_site(_require_str(jira_raw, "jira.site"))
+    if not site:
+        raise ConfigError("jira.site 에 호스트가 없음 (예: mycompany.atlassian.net)")
     default_project = _require_str(jira_raw, "jira.default_project")
     default_issue_type = _require_str(jira_raw, "jira.default_issue_type")
 

@@ -27,7 +27,7 @@ class DateClauseTest(unittest.TestCase):
         self.assertEqual(_date_clause("updated", "24h"), "updated >= -24h")
         self.assertEqual(_date_clause("created", "2w"), "created >= -2w")
         # 1m은 한 달. JQL에서 소문자 m은 분이라 M으로 바꾼다.
-        self.assertEqual(_date_clause("created", "1m"), "created >= -1M")
+        self.assertEqual(_date_clause("created", "1m"), "created >= startOfDay(-1M)")
 
     def test_plain_date_means_since(self) -> None:
         self.assertEqual(_date_clause("updated", "2026-05-15"), 'updated >= "2026-05-15"')
@@ -49,6 +49,13 @@ class DateClauseTest(unittest.TestCase):
         expected = 'updated >= "2026-05-01" AND updated < "2026-05-16"'
         self.assertEqual(_date_clause("updated", "2026-05-01..2026-05-15"), expected)
         self.assertEqual(_date_clause("updated", "2026-05-01~2026-05-15"), expected)
+
+    def test_impossible_calendar_dates_rejected_cleanly(self) -> None:
+        # 정규식은 통과하지만 달력에 없는 날짜. 스택트레이스가 아니라 QueryError여야 한다.
+        for value in ["<=2026-02-30", ">2026-13-01", "2026-04-01..2026-04-31", "2026-02-30", "<2026-02-30"]:
+            with self.subTest(value=value):
+                with self.assertRaises(QueryError):
+                    _date_clause("updated", value)
 
     def test_range_start_after_end_rejected(self) -> None:
         with self.assertRaises(QueryError) as ctx:
