@@ -74,4 +74,5 @@ jobs:
           name: dist
           path: dist/
 
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      # id-token: write 권한을 받는 서드파티 액션이라 브랜치 ref(release/v1) 대신 커밋 SHA로 고정한다.
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
