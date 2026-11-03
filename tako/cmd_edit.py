@@ -64,7 +64,8 @@ def cmd_update(args: Any, cfg: TakoConfig) -> int:
         sys.stderr.write(f"[jira] {exc}\n")
         return 2
     current_summary = (issue.get("fields") or {}).get("summary", "")
-    current_md = adf_to_markdown((issue.get("fields") or {}).get("description"))
+    current_adf = (issue.get("fields") or {}).get("description")
+    current_md = adf_to_markdown(current_adf)
 
     merged_md: str | None = None
     new_section: str | None = None
@@ -112,7 +113,12 @@ def cmd_update(args: Any, cfg: TakoConfig) -> int:
     if new_summary is not None:
         fields["summary"] = new_summary
     if merged_md is not None:
-        fields["description"] = markdown_to_adf(merged_md)
+        if args.mode == "append":
+            # 기존 본문은 ADF 그대로 두고 새 섹션만 변환해 뒤에 붙인다. 기존 본문을
+            # 마크다운으로 바꿨다가 되돌리면 표·체크리스트·이미지·패널·멘션이 사라진다.
+            fields["description"] = append_adf(current_adf, markdown_to_adf(new_section or ""))
+        else:
+            fields["description"] = markdown_to_adf(merged_md)
     try:
         client.update_issue_fields(key, fields)
     except JiraApiError as exc:
@@ -243,3 +249,13 @@ def cmd_retype(args: Any, cfg: TakoConfig) -> int:
     )
     print(key)
     return 0
+
+
+def append_adf(current: dict | None, addition: dict) -> dict:
+    """기존 ADF 문서 뒤에 다른 ADF 문서의 블록들을 이어 붙인다."""
+    if not current or not current.get("content"):
+        return addition
+    return {
+        **current,
+        "content": list(current["content"]) + list(addition.get("content") or []),
+    }

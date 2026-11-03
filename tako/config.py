@@ -26,6 +26,17 @@ class ConfigNotFoundError(ConfigError):
     """설정 파일 자체가 없음 — 첫 실행. 호출자가 init 제안으로 분기한다."""
 
 
+def normalize_site(value: str) -> str:
+    """'https://x.atlassian.net/jira/' 처럼 붙여 넣어도 호스트만 남긴다.
+
+    그대로 쓰면 요청 URL이 'https://https//x...' 가 되어 알아보기 힘든 네트워크 오류로 끝난다.
+    """
+    site = value.strip()
+    if "://" in site:
+        site = site.split("://", 1)[1]
+    return site.split("/", 1)[0].strip()
+
+
 @dataclass(frozen=True)
 class JiraSite:
     site: str
@@ -89,7 +100,9 @@ def _build_config(raw: dict[str, Any]) -> TakoConfig:
     if not isinstance(jira_raw, dict):
         raise ConfigError("jira 블록 누락 또는 형식 틀림.")
 
-    site = _require_str(jira_raw, "jira.site")
+    site = normalize_site(_require_str(jira_raw, "jira.site"))
+    if not site:
+        raise ConfigError("jira.site 에 호스트가 없음 (예: mycompany.atlassian.net)")
     default_project = _require_str(jira_raw, "jira.default_project")
     default_issue_type = _require_str(jira_raw, "jira.default_issue_type")
 
@@ -234,7 +247,7 @@ def interactive_init(
 
     sys.stderr.write("tako init — 5개 항목 + 선택 1개 입력.\n\n")
 
-    site = ask_text("Atlassian 도메인 (예: mycompany.atlassian.net)")
+    site = normalize_site(ask_text("Atlassian 도메인 (예: mycompany.atlassian.net)"))
     project = ask_text("기본 프로젝트 키 (예: WL)")
     issue_type = ask_text("기본 이슈 타입 (예: Task, 기능변경)")
     email = ask_text("Atlassian 이메일")
