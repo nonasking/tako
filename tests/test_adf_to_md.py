@@ -95,7 +95,10 @@ class InlineNodesTest(unittest.TestCase):
             t(" 담당 "),
             {"type": "mention", "attrs": {"id": "abc", "text": "@홍길동"}},
         ))
-        self.assertEqual(md, "⚠️ [IN PROGRESS] 마감 2026-01-01 담당 @@홍길동")
+        self.assertEqual(md, "⚠️ [IN PROGRESS] 마감 2026-01-01 담당 @홍길동")
+
+    def test_mention_without_at_sign(self) -> None:
+        self.assertEqual(adf_to_markdown({"type": "mention", "attrs": {"id": "abc", "displayName": "홍길동"}}), "@홍길동")
 
     def test_bad_date_is_empty(self) -> None:
         self.assertEqual(adf_to_markdown({"type": "date", "attrs": {"timestamp": "soon"}}), "")

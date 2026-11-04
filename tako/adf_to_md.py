@@ -82,7 +82,9 @@ def adf_to_markdown(node: Any) -> str:
         return "\n"
 
     if ntype == "mention":
-        return f"@{attrs.get('text') or attrs.get('displayName') or attrs.get('id') or ''}"
+        # Jira는 attrs.text에 "@홍길동"처럼 @를 붙여 준다. 두 번 붙지 않게 떼고 붙인다.
+        name = attrs.get("text") or attrs.get("displayName") or attrs.get("id") or ""
+        return f"@{str(name).lstrip('@')}"
 
     if ntype in ("inlineCard", "blockCard", "embedCard"):
         return attrs.get("url", "")
