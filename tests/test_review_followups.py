@@ -160,3 +160,47 @@ class CmdUpdateWiringTest(unittest.TestCase):
         client = self._Client(self.EXISTING_ADF)
         self.assertEqual(self._run(client, body=None, summary="새 제목"), 0)
         self.assertEqual(client.sent, {"summary": "새 제목"})
+
+
+class RetryAfterRequestSentTest(unittest.TestCase):
+    """requests.ConnectionError 중 요청을 보낸 뒤 끊긴 경우는 생성 호출을 재시도하지 않는다."""
+
+    @staticmethod
+    def _refused() -> requests.ConnectionError:
+        from urllib3.exceptions import MaxRetryError, NewConnectionError
+
+        reason = NewConnectionError(None, "Failed to establish a new connection: [Errno 61] Connection refused")
+        return requests.ConnectionError(MaxRetryError(None, "/rest/api/3/issue", reason=reason))
+
+    @staticmethod
+    def _aborted() -> requests.ConnectionError:
+        from http.client import RemoteDisconnected
+
+        from urllib3.exceptions import ProtocolError
+
+        return requests.ConnectionError(
+            ProtocolError("Connection aborted.", RemoteDisconnected("Remote end closed connection without response"))
+        )
+
+    def test_create_retried_when_connection_refused(self) -> None:
+        client, session = _client([self._refused(), FakeResponse(201, payload={"key": "WL-9"})])
+        self.assertEqual(client.create_issue({"summary": "x"}).key, "WL-9")
+        self.assertEqual(len(session.calls), 2)
+
+    def test_create_not_retried_when_connection_aborted_after_send(self) -> None:
+        client, session = _client([self._aborted(), FakeResponse(201, payload={"key": "WL-9"})])
+        with self.assertRaises(JiraApiError) as ctx:
+            client.create_issue({"summary": "x"})
+        self.assertIn("확인 후", str(ctx.exception))
+        self.assertEqual(len(session.calls), 1)
+
+    def test_get_still_retried_when_connection_aborted(self) -> None:
+        ok = FakeResponse(200, payload={"key": "WL-1"})
+        client, session = _client([self._aborted(), ok])
+        self.assertEqual(client.get_issue("WL-1")["key"], "WL-1")
+        self.assertEqual(len(session.calls), 2)
+
+    def test_ssl_handshake_failure_on_create_is_retried(self) -> None:
+        client, session = _client([requests.exceptions.SSLError("handshake"), FakeResponse(201, payload={"key": "WL-9"})])
+        self.assertEqual(client.create_issue({"summary": "x"}).key, "WL-9")
+        self.assertEqual(len(session.calls), 2)
