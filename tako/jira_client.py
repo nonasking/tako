@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import requests
+from urllib3.exceptions import ConnectTimeoutError
 
 from .auth import Credentials
 from .patterns import browse_url
@@ -29,6 +30,21 @@ class CreatedIssue:
 
 # 429 Retry-After 가 없거나 비상식적으로 클 때의 대기 상한 (초)
 _MAX_RETRY_AFTER = 15.0
+
+
+def _never_reached_server(exc: requests.RequestException) -> bool:
+    """요청이 서버에 전달되기 전에 실패했다고 확신할 수 있는지.
+
+    requests.ConnectionError는 연결 거부처럼 보내기 전 실패와, 요청을 보낸 뒤 응답을
+    기다리다 끊긴 경우("Connection aborted", 본문 읽기 타임아웃)를 함께 담는다.
+    뒤쪽은 서버가 처리를 마쳤을 수 있으므로, 확실히 보내기 전인 경우만 True.
+    urllib3 2.x에서 NewConnectionError·NameResolutionError는 ConnectTimeoutError의 하위 클래스다.
+    """
+    if isinstance(exc, (requests.ConnectTimeout, requests.exceptions.SSLError, requests.exceptions.ProxyError)):
+        return True
+    cause = exc.args[0] if exc.args else None
+    reason = getattr(cause, "reason", None)  # urllib3 MaxRetryError.reason
+    return isinstance(reason, ConnectTimeoutError) or isinstance(cause, ConnectTimeoutError)
 
 
 class JiraSiteClient:
@@ -61,9 +77,11 @@ class JiraSiteClient:
     ) -> requests.Response:
         """재시도 정책:
 
-        - 연결 오류·연결 타임아웃: 항상 재시도 — 요청이 서버에 닿기 전 실패.
-        - 응답 대기 타임아웃(ReadTimeout): 요청은 이미 서버에 닿았을 수 있어 5xx와
-          같이 *멱등 호출만* 재시도. POST /issue 를 재시도하면 티켓이 중복된다.
+        - 서버에 닿기 전 실패(연결 거부·DNS 실패·연결 타임아웃·TLS 핸드셰이크·프록시):
+          항상 재시도.
+        - 그 밖의 네트워크 오류(응답 대기 타임아웃, 응답 도중 끊김 "Connection aborted",
+          본문 읽다 난 타임아웃): 요청은 이미 서버에 닿았을 수 있어 5xx와 같이
+          *멱등 호출만* 재시도. POST /issue 를 재시도하면 티켓이 중복된다.
         - 429: 항상 재시도 — 처리 전에 거절된 요청이라 중복 위험 없음. Retry-After 존중.
         - 5xx: *멱등 호출만* 재시도. POST /issue 는 서버가 처리를 마쳤을 수도 있어
           재시도하면 티켓이 중복 생성될 수 있다. 기본값은 메서드로 추정
@@ -79,17 +97,12 @@ class JiraSiteClient:
                 resp = self._session.request(
                     method, url, json=json, auth=self._auth, timeout=self._timeout
                 )
-            except requests.ReadTimeout as exc:
-                if last_try or not retry_responses:
-                    raise JiraApiError(
-                        f"응답 시간 초과: {exc}"
-                        + ("" if retry_responses else " (요청이 처리됐을 수 있으니 Jira에서 확인 후 다시 시도)")
-                    ) from exc
-                self._sleep(float(attempt))
-                continue
             except (requests.ConnectionError, requests.Timeout) as exc:
-                if last_try:
-                    raise JiraApiError(f"네트워크 오류: {exc}") from exc
+                safe_to_retry = retry_responses or _never_reached_server(exc)
+                if last_try or not safe_to_retry:
+                    label = "응답 시간 초과" if isinstance(exc, requests.ReadTimeout) else "네트워크 오류"
+                    hint = "" if safe_to_retry else " (요청이 처리됐을 수 있으니 Jira에서 확인 후 다시 시도)"
+                    raise JiraApiError(f"{label}: {exc}{hint}") from exc
                 self._sleep(float(attempt))
                 continue
             if resp.status_code == 429 and not last_try:
