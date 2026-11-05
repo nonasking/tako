@@ -157,6 +157,19 @@ class SchemaViolationTest(unittest.TestCase):
         self.assertEqual(adf_to_markdown({"type": "paragraph", "attrs": "nope", "content": 3}), "")
         self.assertEqual(adf_to_markdown(p({"type": "text", "text": "링크", "marks": [{"type": "link", "attrs": "x"}]})), "[링크]()")
         self.assertEqual(adf_to_markdown(p({"type": "text", "text": "글", "marks": "strong"})), "글")
+        # 미지원 노드의 자식 type 이 문자열이 아니어도(unhashable) 예외가 나지 않는다.
+        self.assertEqual(
+            adf_to_markdown({"type": "someFutureContainer", "content": [{"type": ["x"], "content": [t("a")]}]}),
+            "a",
+        )
+
+    def test_ordered_list_starting_at_zero(self) -> None:
+        # 스키마상 order 는 0 이상이다. 0.5.0 까지는 0 을 1 로 바꿔 보여줬다.
+        md = adf_to_markdown({"type": "orderedList", "attrs": {"order": 0}, "content": [
+            {"type": "listItem", "content": [p(t("영"))]},
+            {"type": "listItem", "content": [p(t("일"))]},
+        ]})
+        self.assertEqual(md, "0. 영\n1. 일")
 
 
 if __name__ == "__main__":
