@@ -1,7 +1,8 @@
 """Jira REST v3 클라이언트.
 
 422/400 같은 의미 있는 실패는 즉시 보고. 재시도는 _request 의 정책 참고 —
-네트워크 끊김·429 는 재시도, 5xx 는 멱등 호출만 (POST /issue 중복 생성 방지).
+서버에 닿기 전 실패·429 는 항상 재시도, 전송 후 네트워크 오류·5xx 는 멱등 호출만
+(POST /issue 중복 생성 방지).
 """
 
 from __future__ import annotations
@@ -32,6 +33,19 @@ class CreatedIssue:
 _MAX_RETRY_AFTER = 15.0
 
 
+# 서버 상태를 바꾸는 호출이 서버에 닿았을 수 있는 채로 실패했을 때 붙이는 안내
+_MAYBE_APPLIED_HINT = " (요청이 처리됐을 수 있으니 Jira에서 확인 후 다시 시도)"
+
+# _request 가 네트워크 실패로 다루는 예외. ChunkedEncodingError·ContentDecodingError 는
+# 응답 본문을 읽다 끊긴 경우로, ConnectionError 의 하위 클래스가 아니라 따로 잡는다.
+_NETWORK_ERRORS = (
+    requests.ConnectionError,
+    requests.Timeout,
+    requests.exceptions.ChunkedEncodingError,
+    requests.exceptions.ContentDecodingError,
+)
+
+
 def _never_reached_server(exc: requests.RequestException) -> bool:
     """요청이 서버에 전달되기 전에 실패했다고 확신할 수 있는지.
 
@@ -39,8 +53,11 @@ def _never_reached_server(exc: requests.RequestException) -> bool:
     기다리다 끊긴 경우("Connection aborted", 본문 읽기 타임아웃)를 함께 담는다.
     뒤쪽은 서버가 처리를 마쳤을 수 있으므로, 확실히 보내기 전인 경우만 True.
     urllib3 2.x에서 NewConnectionError·NameResolutionError는 ConnectTimeoutError의 하위 클래스다.
+
+    SSLError는 여기 넣지 않는다. 핸드셰이크 실패(보내기 전)와 요청을 보낸 뒤 응답을
+    읽다 난 TLS 오류가 같은 예외로 오기 때문에 구분할 수 없다.
     """
-    if isinstance(exc, (requests.ConnectTimeout, requests.exceptions.SSLError, requests.exceptions.ProxyError)):
+    if isinstance(exc, (requests.ConnectTimeout, requests.exceptions.ProxyError)):
         return True
     cause = exc.args[0] if exc.args else None
     reason = getattr(cause, "reason", None)  # urllib3 MaxRetryError.reason
@@ -77,17 +94,19 @@ class JiraSiteClient:
     ) -> requests.Response:
         """재시도 정책:
 
-        - 서버에 닿기 전 실패(연결 거부·DNS 실패·연결 타임아웃·TLS 핸드셰이크·프록시):
-          항상 재시도.
+        - 서버에 닿기 전 실패(연결 거부·DNS 실패·연결 타임아웃·프록시): 항상 재시도.
         - 그 밖의 네트워크 오류(응답 대기 타임아웃, 응답 도중 끊김 "Connection aborted",
-          본문 읽다 난 타임아웃): 요청은 이미 서버에 닿았을 수 있어 5xx와 같이
-          *멱등 호출만* 재시도. POST /issue 를 재시도하면 티켓이 중복된다.
+          본문 읽다 끊김·타임아웃, TLS 오류): 요청은 이미 서버에 닿았을 수 있어 5xx와
+          같이 *멱등 호출만* 재시도. POST /issue 를 재시도하면 티켓이 중복된다.
+          상태를 바꾸는 호출이 이렇게 실패하면 "처리됐을 수 있음" 안내를 붙인다.
         - 429: 항상 재시도 — 처리 전에 거절된 요청이라 중복 위험 없음. Retry-After 존중.
         - 5xx: *멱등 호출만* 재시도. POST /issue 는 서버가 처리를 마쳤을 수도 있어
           재시도하면 티켓이 중복 생성될 수 있다. 기본값은 메서드로 추정
           (GET/PUT/DELETE = 재시도) — 검색처럼 POST 여도 안전한 곳은 호출자가
           retry_responses=True 로 명시한다.
         """
+        # 재시도를 명시한 POST(검색)는 조회이므로 상태를 바꾸는 호출로 보지 않는다.
+        mutating = method.upper() not in ("GET", "HEAD") and retry_responses is not True
         if retry_responses is None:
             retry_responses = method.upper() in ("GET", "PUT", "DELETE")
         url = self._endpoint(path)
@@ -97,11 +116,13 @@ class JiraSiteClient:
                 resp = self._session.request(
                     method, url, json=json, auth=self._auth, timeout=self._timeout
                 )
-            except (requests.ConnectionError, requests.Timeout) as exc:
-                safe_to_retry = retry_responses or _never_reached_server(exc)
+            except _NETWORK_ERRORS as exc:
+                reached = not _never_reached_server(exc)
+                safe_to_retry = retry_responses or not reached
                 if last_try or not safe_to_retry:
                     label = "응답 시간 초과" if isinstance(exc, requests.ReadTimeout) else "네트워크 오류"
-                    hint = "" if safe_to_retry else " (요청이 처리됐을 수 있으니 Jira에서 확인 후 다시 시도)"
+                    # PUT 처럼 재시도하는 호출도 마지막까지 실패하면 반영됐는지 알 수 없다.
+                    hint = _MAYBE_APPLIED_HINT if (mutating and reached) else ""
                     raise JiraApiError(f"{label}: {exc}{hint}") from exc
                 self._sleep(float(attempt))
                 continue
@@ -118,12 +139,16 @@ class JiraSiteClient:
         # fields = build_payload()['payload']['fields']
         resp = self._request("POST", "issue", json={"fields": fields})
         if resp.status_code == 201:
-            data = resp.json()
-            key = data.get("key")
+            # 201 이면 티켓은 이미 만들어졌다. 본문을 못 읽어도 다시 만들면 중복된다.
+            try:
+                data = resp.json()
+            except ValueError as exc:
+                raise JiraApiError("201 응답 본문을 읽지 못함." + _MAYBE_APPLIED_HINT) from exc
+            key = data.get("key") if isinstance(data, dict) else None
             if not key:
-                raise JiraApiError(f"응답에 키 없음: {data}")
+                raise JiraApiError(f"응답에 키 없음: {data}" + _MAYBE_APPLIED_HINT)
             return CreatedIssue(key=key, url=browse_url(self._site, key), raw=data)
-        raise JiraApiError(_format_error(resp))
+        raise JiraApiError(_format_error(resp, mutating=True))
 
     def list_fields(self) -> list[dict[str, Any]]:
         """GET /rest/api/3/field — 사이트의 모든 필드 목록."""
@@ -195,7 +220,7 @@ class JiraSiteClient:
         resp = self._request("POST", "issueLink", json=body)
         if resp.status_code in (200, 201):
             return
-        raise JiraApiError(_format_error(resp))
+        raise JiraApiError(_format_error(resp, mutating=True))
 
     def get_myself(self) -> dict[str, Any]:
         """GET /rest/api/3/myself — 현재 사용자 정보 (accountId / displayName / emailAddress)."""
@@ -249,7 +274,7 @@ class JiraSiteClient:
             return
         if resp.status_code == 404:
             raise JiraApiError(f"이슈를 찾을 수 없음: {key}")
-        raise JiraApiError(_format_error(resp))
+        raise JiraApiError(_format_error(resp, mutating=True))
 
     def search_issues(
         self,
@@ -288,7 +313,8 @@ def _retry_after_seconds(resp: requests.Response) -> float | None:
     return seconds if seconds >= 0 else None
 
 
-def _format_error(resp: requests.Response) -> str:
+def _format_error(resp: requests.Response, *, mutating: bool = False) -> str:
+    """mutating: 서버 상태를 바꾸는 호출. 5xx 면 처리됐을 수 있다는 안내를 붙인다."""
     code = resp.status_code
     text = (resp.text or "").strip()
     if code == 401:
@@ -300,7 +326,7 @@ def _format_error(resp: requests.Response) -> str:
     if code == 429:
         return f"429 한도 초과. body: {text[:300]}"
     if 500 <= code < 600:
-        return f"{code} 서버 오류. body: {text[:300]}"
+        return f"{code} 서버 오류. body: {text[:300]}" + (_MAYBE_APPLIED_HINT if mutating else "")
     return f"{code} 예상치 못한 응답. body: {text[:500]}"
 
 
