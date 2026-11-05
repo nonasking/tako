@@ -128,5 +128,36 @@ class FallbackTest(unittest.TestCase):
         self.assertEqual(md, "왼쪽\n\n오른쪽")
 
 
+class SchemaViolationTest(unittest.TestCase):
+    """스키마를 어긴 값이 와도 예외 없이 변환한다 (본문 하나 때문에 조회·수정이 막히지 않게)."""
+
+    def test_non_numeric_or_missing_numbers(self) -> None:
+        self.assertEqual(adf_to_markdown({"type": "heading", "attrs": {"level": "big"}, "content": [t("제목")]}), "# 제목")
+        self.assertEqual(adf_to_markdown({"type": "heading", "attrs": {"level": None}, "content": [t("제목")]}), "# 제목")
+        md = adf_to_markdown({"type": "orderedList", "attrs": {"order": "first"}, "content": [
+            {"type": "listItem", "content": [p(t("하나"))]},
+        ]})
+        self.assertEqual(md, "1. 하나")
+
+    def test_out_of_range_date(self) -> None:
+        self.assertEqual(adf_to_markdown({"type": "date", "attrs": {"timestamp": "9" * 30}}), "")
+
+    def test_non_string_inline_values(self) -> None:
+        self.assertEqual(adf_to_markdown(p({"type": "emoji", "attrs": {"text": 5}})), "5")
+        self.assertEqual(adf_to_markdown(p({"type": "placeholder", "attrs": {"text": 7}})), "7")
+        self.assertEqual(adf_to_markdown(p({"type": "text", "text": None})), "")
+        self.assertEqual(adf_to_markdown(p({"type": "inlineCard", "attrs": {"url": None}})), "")
+
+    def test_odd_containers(self) -> None:
+        self.assertEqual(
+            adf_to_markdown({"type": "panel", "attrs": {"panelType": ["x"]}, "content": [p(t("본문"))]}),
+            "> **[INFO]**\n> 본문",
+        )
+        self.assertEqual(adf_to_markdown({"type": "bulletList", "content": ["그냥 문자열", None]}), "- 그냥 문자열\n- ")
+        self.assertEqual(adf_to_markdown({"type": "paragraph", "attrs": "nope", "content": 3}), "")
+        self.assertEqual(adf_to_markdown(p({"type": "text", "text": "링크", "marks": [{"type": "link", "attrs": "x"}]})), "[링크]()")
+        self.assertEqual(adf_to_markdown(p({"type": "text", "text": "글", "marks": "strong"})), "글")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -200,7 +200,146 @@ class RetryAfterRequestSentTest(unittest.TestCase):
         self.assertEqual(client.get_issue("WL-1")["key"], "WL-1")
         self.assertEqual(len(session.calls), 2)
 
-    def test_ssl_handshake_failure_on_create_is_retried(self) -> None:
-        client, session = _client([requests.exceptions.SSLError("handshake"), FakeResponse(201, payload={"key": "WL-9"})])
+    def test_tls_error_on_create_is_not_retried(self) -> None:
+        # SSLError 는 핸드셰이크 실패와, 요청을 보낸 뒤 응답을 읽다 난 TLS 오류를 구분할 수
+        # 없다. 뒤쪽이면 티켓이 이미 만들어졌을 수 있으므로 생성은 재시도하지 않는다.
+        client, session = _client([requests.exceptions.SSLError("bad record mac"), FakeResponse(201, payload={"key": "WL-9"})])
+        with self.assertRaises(JiraApiError) as ctx:
+            client.create_issue({"summary": "x"})
+        self.assertIn("확인 후", str(ctx.exception))
+        self.assertEqual(len(session.calls), 1)
+
+    def test_tls_error_on_get_is_still_retried(self) -> None:
+        ok = FakeResponse(200, payload={"key": "WL-1"})
+        client, session = _client([requests.exceptions.SSLError("bad record mac"), ok])
+        self.assertEqual(client.get_issue("WL-1")["key"], "WL-1")
+        self.assertEqual(len(session.calls), 2)
+
+    def test_proxy_connect_failure_on_create_is_retried(self) -> None:
+        client, session = _client([requests.exceptions.ProxyError("cannot connect to proxy"), FakeResponse(201, payload={"key": "WL-9"})])
         self.assertEqual(client.create_issue({"summary": "x"}).key, "WL-9")
         self.assertEqual(len(session.calls), 2)
+
+
+class TruncatedResponseTest(unittest.TestCase):
+    """응답 본문이 중간에 끊긴 경우 (ChunkedEncodingError 는 ConnectionError 의 하위 클래스가 아니다)."""
+
+    def test_truncated_response_on_create_is_reported_not_retried(self) -> None:
+        client, session = _client([
+            requests.exceptions.ChunkedEncodingError("Response ended prematurely"),
+            FakeResponse(201, payload={"key": "WL-9"}),
+        ])
+        with self.assertRaises(JiraApiError) as ctx:
+            client.create_issue({"summary": "x"})
+        self.assertIn("확인 후", str(ctx.exception))
+        self.assertEqual(len(session.calls), 1)
+
+    def test_truncated_response_on_get_is_retried(self) -> None:
+        ok = FakeResponse(200, payload={"key": "WL-1"})
+        client, session = _client([requests.exceptions.ChunkedEncodingError("Response ended prematurely"), ok])
+        self.assertEqual(client.get_issue("WL-1")["key"], "WL-1")
+        self.assertEqual(len(session.calls), 2)
+
+    def test_unreadable_201_body_warns_ticket_may_exist(self) -> None:
+        class BadJson(FakeResponse):
+            def json(self):
+                raise ValueError("Expecting value")
+
+        client, _ = _client(BadJson(201))
+        with self.assertRaises(JiraApiError) as ctx:
+            client.create_issue({"summary": "x"})
+        self.assertIn("확인 후", str(ctx.exception))
+
+    def test_201_without_key_warns_ticket_may_exist(self) -> None:
+        client, _ = _client(FakeResponse(201, payload=["unexpected"]))
+        with self.assertRaises(JiraApiError) as ctx:
+            client.create_issue({"summary": "x"})
+        self.assertIn("확인 후", str(ctx.exception))
+
+
+class MaybeAppliedHintTest(unittest.TestCase):
+    """상태를 바꾸는 호출이 서버에 닿았을 수 있는 채로 실패하면 확인 안내를 붙인다."""
+
+    def test_put_exhausted_after_sent_errors_has_hint(self) -> None:
+        # PUT 은 재시도하지만 세 번 모두 응답을 못 받으면 반영됐는지 알 수 없다.
+        client, session = _client(requests.ReadTimeout("slow"))
+        with self.assertRaises(JiraApiError) as ctx:
+            client.update_issue_fields("WL-1", {"summary": "x"})
+        self.assertEqual(len(session.calls), 3)
+        self.assertIn("확인 후", str(ctx.exception))
+
+    def test_put_exhausted_before_reaching_server_has_no_hint(self) -> None:
+        client, _ = _client(requests.ConnectTimeout("no route"))
+        with self.assertRaises(JiraApiError) as ctx:
+            client.update_issue_fields("WL-1", {"summary": "x"})
+        self.assertNotIn("확인 후", str(ctx.exception))
+
+    def test_5xx_on_create_and_update_has_hint(self) -> None:
+        client, _ = _client(FakeResponse(503, text="unavailable"))
+        with self.assertRaises(JiraApiError) as ctx:
+            client.create_issue({"summary": "x"})
+        self.assertIn("확인 후", str(ctx.exception))
+
+        client, _ = _client(FakeResponse(503, text="unavailable"))
+        with self.assertRaises(JiraApiError) as ctx:
+            client.update_issue_fields("WL-1", {"summary": "x"})
+        self.assertIn("확인 후", str(ctx.exception))
+
+    def test_read_only_failures_have_no_hint(self) -> None:
+        client, _ = _client(requests.ReadTimeout("slow"))
+        with self.assertRaises(JiraApiError) as ctx:
+            client.get_issue("WL-1")
+        self.assertNotIn("확인 후", str(ctx.exception))
+
+        # 검색은 POST 지만 조회다.
+        client, _ = _client(requests.ReadTimeout("slow"))
+        with self.assertRaises(JiraApiError) as ctx:
+            client.search_issues("project = WL")
+        self.assertNotIn("확인 후", str(ctx.exception))
+
+        client, _ = _client(FakeResponse(503, text="unavailable"))
+        with self.assertRaises(JiraApiError) as ctx:
+            client.get_issue("WL-1")
+        self.assertNotIn("확인 후", str(ctx.exception))
+
+    def test_4xx_on_create_has_no_hint(self) -> None:
+        client, _ = _client(FakeResponse(400, text="bad field"))
+        with self.assertRaises(JiraApiError) as ctx:
+            client.create_issue({"summary": "x"})
+        self.assertNotIn("확인 후", str(ctx.exception))
+
+
+class CmdUpdateDoesNotConvertUnneededBodyTest(unittest.TestCase):
+    """제목만 바꾸거나 append 할 때는 기존 본문을 마크다운으로 변환하지 않는다."""
+
+    def _run(self, **over):
+        import argparse
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+        from unittest.mock import patch
+
+        from tako.cmd_edit import cmd_update
+        from tests.test_cmd_new import _cfg
+
+        client = CmdUpdateWiringTest._Client(CmdUpdateWiringTest.EXISTING_ADF)
+        args = argparse.Namespace(
+            key="WL-1", summary=None, body="새 내용", mode="append", section="작업 결과",
+            yes=True, credentials=None,
+        )
+        for k, v in over.items():
+            setattr(args, k, v)
+        with patch("tako.cmd_edit.build_client", return_value=client), \
+                patch("tako.cmd_edit.adf_to_markdown", side_effect=AssertionError("변환 호출 금지")) as conv, \
+                redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            rc = cmd_update(args, _cfg())
+        return rc, client, conv
+
+    def test_summary_only(self) -> None:
+        rc, client, _ = self._run(body=None, summary="새 제목")
+        self.assertEqual(rc, 0)
+        self.assertEqual(client.sent, {"summary": "새 제목"})
+
+    def test_append(self) -> None:
+        rc, client, _ = self._run()
+        self.assertEqual(rc, 0)
+        self.assertEqual(client.sent["description"]["content"][:2], CmdUpdateWiringTest.EXISTING_ADF["content"])
