@@ -25,14 +25,14 @@ flowchart TD
     PREVIEW -->|"n"| CANCEL["cancel — exit 1, no REST call"]
     PREVIEW -->|"Y"| CLIENT
 
-    CFG --> CLIENT["jira_client.py<br/>one requests.Session (reused)<br/>retries: network · 429 (Retry-After) · idempotent-only 5xx<br/>_format_error → 401 / 403 / 400·422 / 429 / 5xx"]
+    CFG --> CLIENT["jira_client.py<br/>one requests.Session (reused)<br/>retries: unsent requests · 429 (Retry-After) · idempotent-only otherwise<br/>_format_error → 401 / 403 / 400·422 / 429 / 5xx"]
     AUTH --> CLIENT
     CLIENT <--> ADF["markdown ↔ ADF<br/>md-to-adf · adf_to_md.py"]
     CLIENT --> REST["Jira Cloud REST v3<br/>POST /issue · POST /search/jql · GET·PUT /issue/&lt;key&gt;<br/>/issue/&lt;key&gt;/editmeta · /myself · /user/search<br/>/mypermissions · /field · /issueLink"]
     REST --> OUT["issue key + URL (clipboard.py auto-copy)<br/>· text table · JSON · CSV"]
 ```
 
-Meaningful failures (400/422/403) are reported as-is. Retries (up to 2 extra attempts): dropped connections and 429 — respecting `Retry-After` — always; 5xx only for idempotent calls. `POST /issue` is *never* retried on 5xx, since the server may have already created the ticket. Links are a *separate* request after creation — if a link fails the ticket still stands, and only the failure is reported.
+Meaningful failures (400/422/403) are reported as-is. Retries (up to 2 extra attempts): failures that happen before the request reaches Jira (connection refused, DNS, connect timeout, proxy) and 429 — respecting `Retry-After` — always; anything after the request may have been sent (read timeout, dropped or truncated response, TLS error, 5xx) only for idempotent calls. `POST /issue` and `POST /issueLink` are *never* retried in that second group, since the server may have already acted; the error then says to check Jira before running the command again. Links are a *separate* request after creation — if a link fails the ticket still stands, and only the failure is reported.
 
 ## Prerequisites
 
@@ -480,7 +480,7 @@ python -m unittest discover -s tests -v    # all
 python -m unittest tests.test_list_query   # a single module
 ```
 
-Covers the pure logic: JQL building (`test_list_query.py` — shorthand/comparison/range dates, due, story points, escaping), config validation messages (`test_config.py`), REST error mapping, the retry policy, and the ADF conversion boundary (`test_jira_client.py`), list pagination / filter assembly / shell hints (`test_cmd_list.py`), CSV and width-aware table formatting (`test_list_output.py`), prompt EOF handling (`test_prompts.py`), issue-type matching for `retype` (`test_retype.py`), the body guide (`test_guide.py`), the sub-task/link lines of `show` (`test_show_render.py`), the reporter path — payload, preview, and the permission pre-check (`test_reporter.py`), the `new` flow — arg → payload assembly, `--draft-file` conflicts, assignee/reporter resolution order (`test_cmd_new.py`), the `fields detect` hint pointing at the config actually in use (`test_cmd_fields.py`), and `--output` path handling — never overwrite, timestamp placement, parent-dir creation (`test_list_output_path.py`). Two more guard the install path: the first-run contract — never prompt when stdin isn't a TTY, and never point at a file only a repo checkout would have (`test_first_run.py`), and slash-command installation — packaging completeness, skip-unless-forced, dangling-symlink repair (`test_slash.py`).
+Covers the pure logic: JQL building (`test_list_query.py` — shorthand/comparison/range dates, due, story points, escaping), config validation messages (`test_config.py`), REST error mapping, the retry policy, and the ADF conversion boundary (`test_jira_client.py`), ADF → markdown rendering for `show` — panels, tables, task lists, inline nodes, schema-violating values (`test_adf_to_md.py`), the regressions pinned after review — `update` keeping existing ADF on append, which network failures are retried for which calls, the "may have been applied" hint, calendar-invalid dates (`test_review_followups.py`), list pagination / filter assembly / shell hints (`test_cmd_list.py`), CSV and width-aware table formatting (`test_list_output.py`), prompt EOF handling (`test_prompts.py`), issue-type matching for `retype` (`test_retype.py`), the body guide (`test_guide.py`), the sub-task/link lines of `show` (`test_show_render.py`), the reporter path — payload, preview, and the permission pre-check (`test_reporter.py`), the `new` flow — arg → payload assembly, `--draft-file` conflicts, assignee/reporter resolution order (`test_cmd_new.py`), the `fields detect` hint pointing at the config actually in use (`test_cmd_fields.py`), and `--output` path handling — never overwrite, timestamp placement, parent-dir creation (`test_list_output_path.py`). Two more guard the install path: the first-run contract — never prompt when stdin isn't a TTY, and never point at a file only a repo checkout would have (`test_first_run.py`), and slash-command installation — packaging completeness, skip-unless-forced, dangling-symlink repair (`test_slash.py`).
 
 ## Releasing
 
