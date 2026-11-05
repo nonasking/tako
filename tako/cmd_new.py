@@ -614,5 +614,12 @@ def cmd_new(args: Any, cfg: TakoConfig) -> int:
                 link_failures.append((target, type_name, str(exc)))
                 sys.stderr.write(f"  [실패] {type_name} → {target}  ({exc})\n")
 
+    if link_failures:
+        # 실패 메시지의 "다시 시도"가 tako new 재실행으로 읽히면 티켓이 중복된다.
+        sys.stderr.write(
+            f"\n티켓 {result.key} 은(는) 이미 만들어졌다. tako new 를 다시 실행하지 말고, "
+            "실패한 연결만 Jira 에서 직접 추가한다.\n"
+        )
+
     print(result.key)  # stdout 에는 키만
     return 1 if link_failures else 0

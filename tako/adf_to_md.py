@@ -152,7 +152,10 @@ def adf_to_markdown(node: Any) -> str:
     # (블록을 구분자 없이 이으면 단락·목록이 한 줄로 붙어 읽을 수 없다)
     if not children:
         return ""
-    if any(isinstance(c, dict) and c.get("type") in _BLOCK_TYPES for c in children):
+    if any(
+        isinstance(c, dict) and isinstance(c.get("type"), str) and c["type"] in _BLOCK_TYPES
+        for c in children
+    ):
         return _join_blocks(children)
     return _inline(children)
 
