@@ -65,16 +65,20 @@ def cmd_update(args: Any, cfg: TakoConfig) -> int:
         return 2
     current_summary = (issue.get("fields") or {}).get("summary", "")
     current_adf = (issue.get("fields") or {}).get("description")
-    current_md = adf_to_markdown(current_adf)
 
+    # 기존 본문의 마크다운 변환은 overwrite 미리보기에만 쓴다. 제목만 바꾸거나 append 할
+    # 때는 변환하지 않아, 기존 본문에 변환하기 어려운 노드가 있어도 영향받지 않는다.
+    current_md = ""
     merged_md: str | None = None
     new_section: str | None = None
     if body_md is not None:
         if args.mode == "append":
             section_header = f"## {args.section} ({today_kst_str()})"
             new_section = f"{section_header}\n{body_md}"
-            merged_md = (current_md.rstrip() + "\n\n" + new_section) if current_md.strip() else new_section
+            # append 는 기존 ADF 뒤에 new_section 만 붙여 보낸다 (아래 fields 조립).
+            merged_md = new_section
         else:  # overwrite
+            current_md = adf_to_markdown(current_adf)
             new_section = body_md
             merged_md = body_md
 

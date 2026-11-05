@@ -44,8 +44,8 @@ def adf_to_markdown(node: Any) -> str:
         return ""
 
     ntype = node.get("type")
-    attrs = node.get("attrs") or {}
-    children = node.get("content") or []
+    attrs = _attrs(node)
+    children = _children(node)
 
     if ntype == "doc":
         return _join_blocks(children)
@@ -54,14 +54,14 @@ def adf_to_markdown(node: Any) -> str:
         return _inline(children)
 
     if ntype == "heading":
-        level = max(1, min(6, int(attrs.get("level", 1))))
+        level = max(1, min(6, _int(attrs.get("level"), 1)))
         return "#" * level + " " + _inline(children)
 
     if ntype == "bulletList":
         return "\n".join(f"- {_list_item(c)}" for c in children)
 
     if ntype == "orderedList":
-        start = int(attrs.get("order") or 1)
+        start = _int(attrs.get("order"), 1)
         return "\n".join(f"{start + i}. {_list_item(c)}" for i, c in enumerate(children))
 
     if ntype == "blockquote":
@@ -76,7 +76,7 @@ def adf_to_markdown(node: Any) -> str:
         return f"```{lang}\n{body}\n```"
 
     if ntype == "text":
-        return _apply_marks(node.get("text", ""), node.get("marks") or [])
+        return _apply_marks(_str(node.get("text")), node.get("marks"))
 
     if ntype == "hardBreak":
         return "\n"
@@ -87,16 +87,17 @@ def adf_to_markdown(node: Any) -> str:
         return f"@{str(name).lstrip('@')}"
 
     if ntype in ("inlineCard", "blockCard", "embedCard"):
-        return attrs.get("url", "")
+        return _str(attrs.get("url"))
 
     if ntype == "panel":
-        kind = attrs.get("panelType") or "info"
-        label = f"**[{_PANEL_LABELS.get(kind, str(kind).upper())}]**"
+        kind = attrs.get("panelType")
+        kind = kind if isinstance(kind, str) and kind else "info"
+        label = f"**[{_PANEL_LABELS.get(kind, kind.upper())}]**"
         body = _join_blocks(children)
         return _quote(f"{label}\n{body}" if body else label)
 
     if ntype in ("expand", "nestedExpand"):
-        title = attrs.get("title") or "펼치기"
+        title = _str(attrs.get("title")) or "펼치기"
         body = _join_blocks(children)
         return f"**▸ {title}**\n\n{body}" if body else f"**▸ {title}**"
 
@@ -120,30 +121,30 @@ def adf_to_markdown(node: Any) -> str:
         return _decision_line(node)
 
     if ntype == "emoji":
-        return attrs.get("text") or attrs.get("shortName") or ""
+        return _str(attrs.get("text")) or _str(attrs.get("shortName"))
 
     if ntype == "status":
-        text = attrs.get("text") or ""
+        text = _str(attrs.get("text"))
         return f"[{text}]" if text else ""
 
     if ntype == "date":
         return _date(attrs.get("timestamp"))
 
     if ntype == "placeholder":
-        return attrs.get("text") or ""
+        return _str(attrs.get("text"))
 
     if ntype in ("mediaSingle", "mediaGroup"):
         return "\n".join(s for s in (adf_to_markdown(c) for c in children) if s)
 
     if ntype in ("media", "mediaInline"):
-        name = attrs.get("alt") or attrs.get("__fileName") or attrs.get("filename") or "file"
+        name = _str(attrs.get("alt")) or _str(attrs.get("__fileName")) or _str(attrs.get("filename")) or "file"
         return f"[첨부: {name}]"
 
     if ntype in ("layoutSection", "layoutColumn"):
         return _join_blocks(children)
 
     if ntype in ("extension", "inlineExtension", "bodiedExtension"):
-        key = attrs.get("extensionKey") or "extension"
+        key = _str(attrs.get("extensionKey")) or "extension"
         body = _join_blocks(children) if children else ""
         return f"[확장: {key}]\n\n{body}" if body else f"[확장: {key}]"
 
@@ -156,19 +157,47 @@ def adf_to_markdown(node: Any) -> str:
     return _inline(children)
 
 
+# --- 스키마를 어긴 값에도 예외 없이 동작하기 위한 헬퍼 ---
+# Jira 가 돌려주는 ADF 는 보통 스키마를 지키지만, 본문 하나가 이상하다고 조회·수정
+# 전체가 트레이스백으로 끝나면 안 된다.
+
+
+def _attrs(node: dict[str, Any]) -> dict[str, Any]:
+    attrs = node.get("attrs")
+    return attrs if isinstance(attrs, dict) else {}
+
+
+def _children(node: dict[str, Any]) -> list[Any]:
+    content = node.get("content")
+    return content if isinstance(content, list) else []
+
+
+def _int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
+def _str(value: Any) -> str:
+    if value is None:
+        return ""
+    return value if isinstance(value, str) else str(value)
+
+
 def _quote(body: str) -> str:
     return "\n".join(f"> {ln}" if ln else ">" for ln in body.split("\n"))
 
 
 def _cell_text(cell: dict[str, Any]) -> str:
     """표 칸 안의 블록을 한 줄로. 칸 안 줄바꿈은 <br>, 파이프는 이스케이프."""
-    body = _join_blocks(cell.get("content") or [])
+    body = _join_blocks(_children(cell))
     return body.replace("|", "\\|").replace("\n\n", "<br>").replace("\n", "<br>").strip()
 
 
 def _table(rows: list[Any]) -> str:
     grid = [
-        [_cell_text(c) for c in (r.get("content") or []) if isinstance(c, dict)]
+        [_cell_text(c) for c in _children(r) if isinstance(c, dict)]
         for r in rows
         if isinstance(r, dict)
     ]
@@ -189,27 +218,30 @@ def _task_line(item: Any) -> str:
     if item.get("type") == "taskList":
         # 중첩 체크리스트는 한 단계 들여쓴다
         return "\n".join("  " + ln for ln in adf_to_markdown(item).split("\n"))
-    done = (item.get("attrs") or {}).get("state") == "DONE"
-    return f"- [{'x' if done else ' '}] {_inline(item.get('content') or [])}"
+    done = _attrs(item).get("state") == "DONE"
+    return f"- [{'x' if done else ' '}] {_inline(_children(item))}"
 
 
 def _decision_line(item: Any) -> str:
     if not isinstance(item, dict):
         return ""
-    return f"- 결정: {_inline(item.get('content') or [])}"
+    return f"- 결정: {_inline(_children(item))}"
 
 
 def _date(timestamp: Any) -> str:
     """ADF date 노드의 timestamp(ms 문자열, UTC 자정)를 YYYY-MM-DD로."""
     try:
         ms = int(timestamp)
-    except (TypeError, ValueError):
+        return _dt.datetime.fromtimestamp(ms / 1000, tz=_dt.timezone.utc).date().isoformat()
+    except (TypeError, ValueError, OverflowError, OSError):
+        # 숫자가 아니거나 표현할 수 없는 범위의 timestamp
         return ""
-    return _dt.datetime.fromtimestamp(ms / 1000, tz=_dt.timezone.utc).date().isoformat()
 
 
-def _list_item(item: dict[str, Any]) -> str:
-    body = _join_blocks(item.get("content") or [])
+def _list_item(item: Any) -> str:
+    if not isinstance(item, dict):
+        return adf_to_markdown(item)
+    body = _join_blocks(_children(item))
     # 다단 리스트는 줄바꿈 + 들여쓰기로 표현
     lines = body.split("\n")
     if len(lines) <= 1:
@@ -227,15 +259,15 @@ def _join_blocks(children: list[Any]) -> str:
 
 def _text_only(node: Any) -> str:
     if isinstance(node, dict) and node.get("type") == "text":
-        return node.get("text", "")
+        return _str(node.get("text"))
     if isinstance(node, dict):
-        return "".join(_text_only(c) for c in node.get("content") or [])
+        return "".join(_text_only(c) for c in _children(node))
     return ""
 
 
-def _apply_marks(text: str, marks: list[dict[str, Any]]) -> str:
+def _apply_marks(text: str, marks: Any) -> str:
     out = text
-    for mark in marks:
+    for mark in marks if isinstance(marks, list) else []:
         mtype = mark.get("type") if isinstance(mark, dict) else None
         if mtype == "strong":
             out = f"**{out}**"
@@ -246,6 +278,6 @@ def _apply_marks(text: str, marks: list[dict[str, Any]]) -> str:
         elif mtype == "strike":
             out = f"~~{out}~~"
         elif mtype == "link":
-            href = (mark.get("attrs") or {}).get("href", "")
+            href = _str(_attrs(mark).get("href"))
             out = f"[{out}]({href})"
     return out
