@@ -27,7 +27,8 @@ class DateClauseTest(unittest.TestCase):
         self.assertEqual(_date_clause("updated", "24h"), "updated >= -24h")
         self.assertEqual(_date_clause("created", "2w"), "created >= -2w")
         # 1m은 한 달. JQL에서 소문자 m은 분이라 M으로 바꾼다.
-        self.assertEqual(_date_clause("created", "1m"), "created >= startOfDay(-1M)")
+        self.assertEqual(_date_clause("created", "1m"), 'created >= startOfDay("-1M")')
+        self.assertEqual(_date_clause("updated", "3m"), 'updated >= startOfDay("-3M")')
 
     def test_plain_date_means_since(self) -> None:
         self.assertEqual(_date_clause("updated", "2026-05-15"), 'updated >= "2026-05-15"')
@@ -49,6 +50,13 @@ class DateClauseTest(unittest.TestCase):
         expected = 'updated >= "2026-05-01" AND updated < "2026-05-16"'
         self.assertEqual(_date_clause("updated", "2026-05-01..2026-05-15"), expected)
         self.assertEqual(_date_clause("updated", "2026-05-01~2026-05-15"), expected)
+
+    def test_day_after_max_date_is_query_error(self) -> None:
+        # 9999-12-31 의 다음 날은 표현할 수 없다. OverflowError 트레이스백이 아니라 QueryError.
+        for value in ["<=9999-12-31", ">9999-12-31", "2026-01-01..9999-12-31"]:
+            with self.subTest(value=value):
+                with self.assertRaises(QueryError):
+                    _date_clause("updated", value)
 
     def test_impossible_calendar_dates_rejected_cleanly(self) -> None:
         # 정규식은 통과하지만 달력에 없는 날짜. 스택트레이스가 아니라 QueryError여야 한다.
@@ -79,6 +87,13 @@ class DueClauseTest(unittest.TestCase):
     def test_exact_date_is_equality(self) -> None:
         # updated/created 와 의도적으로 다름 — 기한은 '그 날짜' 정확 일치.
         self.assertEqual(_due_clause("2026-06-15"), 'duedate = "2026-06-15"')
+
+    def test_impossible_calendar_dates_rejected(self) -> None:
+        # 범위 형태만 검증하던 것을 단일 날짜·비교 형태에도 맞춘다.
+        for value in ["2026-02-30", "<=2026-02-30", ">2026-13-01", "2026-02-01..2026-02-30"]:
+            with self.subTest(value=value):
+                with self.assertRaises(QueryError):
+                    _due_clause(value)
 
     def test_comparison_and_range(self) -> None:
         self.assertEqual(_due_clause("<=2026-06-15"), 'duedate <= "2026-06-15"')

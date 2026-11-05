@@ -106,7 +106,7 @@ def _date_clause(field: str, value: str) -> str:
 
     지원:
       7d / 24h / 2w                 → <field> >= -<단축>   (지난 N 단위)
-      1m                            → <field> >= startOfDay(-1M)  (지난 N개월, 그 날 00:00부터)
+      1m                            → <field> >= startOfDay("-1M")  (지난 N개월, 그 날 00:00부터)
       YYYY-MM-DD                    → <field> >= "..."     (그 날짜 이후)
       <=YYYY-MM-DD                  → <field> < "다음 날"   (그 날 하루 포함)
       <YYYY-MM-DD                   → <field> < "..."
@@ -130,8 +130,9 @@ def _date_clause(field: str, value: str) -> str:
         amount, unit = short.groups()
         if unit == "m":
             # JQL 날짜 리터럴의 상대 단위는 w/d/h/m(분)뿐이라 '-1m'은 1분 전이다.
-            # 도움말의 '1m'은 한 달 뜻이므로, 월 단위가 문서화된 함수 인자 문법을 쓴다.
-            return f"{field} >= startOfDay(-{amount}M)"
+            # 도움말의 '1m'은 한 달 뜻이므로 월 단위(M)를 받는 함수 인자로 쓴다.
+            # Atlassian 문서의 인자 예시는 모두 따옴표가 있는 startOfDay("-1M") 형태다.
+            return f'{field} >= startOfDay("-{amount}M")'
         return f"{field} >= -{value}"
     if _DATE_ONLY.match(value):
         _parse_day(value)
@@ -169,7 +170,11 @@ def _parse_day(day: str) -> _dt.date:
 
 
 def _next_day(day: str) -> str:
-    return (_parse_day(day) + _dt.timedelta(days=1)).isoformat()
+    try:
+        return (_parse_day(day) + _dt.timedelta(days=1)).isoformat()
+    except OverflowError:
+        # 9999-12-31 의 다음 날은 표현할 수 없다.
+        raise QueryError(f"날짜가 범위를 벗어남: {day!r}") from None
 
 
 def _date_range_clause(field: str, value: str, *, datetime_field: bool = False) -> str | None:
@@ -220,9 +225,11 @@ def _due_clause(value: str) -> str:
     if range_clause is not None:
         return range_clause
     if _DATE_ONLY.match(v):
+        _parse_day(v)
         return f'duedate = "{v}"'
     m = _DATE_WITH_OP.match(v)
     if m:
+        _parse_day(m.group(2))
         return f'duedate {m.group(1)} "{m.group(2)}"'
     raise QueryError(
         f"due 값 형식 미지원: {value!r}\n"

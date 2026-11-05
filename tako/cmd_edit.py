@@ -65,18 +65,19 @@ def cmd_update(args: Any, cfg: TakoConfig) -> int:
         return 2
     current_summary = (issue.get("fields") or {}).get("summary", "")
     current_adf = (issue.get("fields") or {}).get("description")
-    current_md = adf_to_markdown(current_adf)
 
-    merged_md: str | None = None
+    # 기존 본문의 마크다운 변환은 overwrite 미리보기에만 쓴다. 제목만 바꾸거나 append 할
+    # 때는 변환하지 않아, 기존 본문에 변환하기 어려운 노드가 있어도 영향받지 않는다.
+    current_md = ""
     new_section: str | None = None
     if body_md is not None:
         if args.mode == "append":
             section_header = f"## {args.section} ({today_kst_str()})"
             new_section = f"{section_header}\n{body_md}"
-            merged_md = (current_md.rstrip() + "\n\n" + new_section) if current_md.strip() else new_section
+            # append 는 기존 ADF 뒤에 new_section 만 붙여 보낸다 (아래 fields 조립).
         else:  # overwrite
+            current_md = adf_to_markdown(current_adf)
             new_section = body_md
-            merged_md = body_md
 
     # 미리보기
     sys.stderr.write(f"\n[{key}] {current_summary}\n")
@@ -112,13 +113,13 @@ def cmd_update(args: Any, cfg: TakoConfig) -> int:
     fields: dict[str, Any] = {}
     if new_summary is not None:
         fields["summary"] = new_summary
-    if merged_md is not None:
+    if body_md is not None:
         if args.mode == "append":
             # 기존 본문은 ADF 그대로 두고 새 섹션만 변환해 뒤에 붙인다. 기존 본문을
             # 마크다운으로 바꿨다가 되돌리면 표·체크리스트·이미지·패널·멘션이 사라진다.
             fields["description"] = append_adf(current_adf, markdown_to_adf(new_section or ""))
         else:
-            fields["description"] = markdown_to_adf(merged_md)
+            fields["description"] = markdown_to_adf(body_md)
     try:
         client.update_issue_fields(key, fields)
     except JiraApiError as exc:
