@@ -69,7 +69,8 @@ jobs:
     permissions:
       id-token: write   # Trusted Publishing 에 필요 — 이것만으로 인증된다.
     steps:
-      - uses: actions/download-artifact@v8
+      # id-token: write 권한이 있는 job 이라 pypi-publish 와 같이 커밋 SHA 로 고정한다.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
           path: dist/
