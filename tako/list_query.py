@@ -6,10 +6,11 @@
 
 from __future__ import annotations
 
+import datetime as _dt
 import re
 from dataclasses import dataclass
 
-from .patterns import ISSUE_KEY_RE, looks_like_account_id
+from .patterns import ISSUE_KEY_RE, is_self_alias, looks_like_account_id
 
 
 _PROJECT_KEY = re.compile(r"^[A-Z][A-Z0-9_]*$")
@@ -19,12 +20,14 @@ _DATE_WITH_OP = re.compile(r"^(<=|>=|<|>)\s*(\d{4}-\d{2}-\d{2})$")
 
 
 DEFAULT_LIST_LIMIT = 20
+OPEN_EACH_CAP = 20  # --open-each 가 확인 없이 여는 탭 수 상한. DEFAULT_LIST_LIMIT 과 값만 같을 뿐 무관
 
 
 @dataclass
 class ListFilters:
     """사용자 인자를 그대로 보존한 필터 묶음."""
     assignee: str | None = None
+    reporter: str | None = None
     projects: tuple[str, ...] = ()
     statuses: tuple[str, ...] = ()
     types: tuple[str, ...] = ()
@@ -49,6 +52,8 @@ class ListOutputOpts:
     as_csv: bool = False
     as_json: bool = False
     output: str | None = None
+    open_search: bool = False  # --open: JQL 검색 페이지 한 탭
+    open_each: bool = False  # --open-each: 티켓마다 탭 하나
 
 
 class QueryError(Exception):
@@ -77,16 +82,20 @@ def _project_clause(values: tuple[str, ...]) -> str:
     return f"project in ({items})"
 
 
-def _assignee_clause(value: str) -> str:
+def _user_clause(field: str, value: str) -> str:
+    """담당자/보고자 공용 — 'me' 는 currentUser(), 이메일·accountId 는 따옴표 리터럴.
+
+    필드 이름만 다르고 해석 규칙은 같다. 이메일 해석은 Jira 에 맡긴다.
+    """
     value = value.strip()
-    if value.lower() in {"me", "current", "self"}:
-        return "assignee = currentUser()"
+    if is_self_alias(value):
+        return f"{field} = currentUser()"
     if "@" in value:  # 이메일
-        return f'assignee = "{_esc(value)}"'
+        return f'{field} = "{_esc(value)}"'
     if looks_like_account_id(value):
-        return f'assignee = "{_esc(value)}"'
+        return f'{field} = "{_esc(value)}"'
     raise QueryError(
-        f"assignee 값 형식 미지원: {value!r}\n"
+        f"{field} 값 형식 미지원: {value!r}\n"
         "  지원: 'me' / 이메일 / accountId\n"
         "  한국어 이름·닉네임은 v1.x 미지원 — accountId 로 변환 후 사용."
     )
@@ -96,29 +105,48 @@ def _date_clause(field: str, value: str) -> str:
     """단순 표현 → JQL 절.
 
     지원:
-      7d / 24h / 2w / 1m            → <field> >= -<단축>   (지난 N 단위)
+      7d / 24h / 2w                 → <field> >= -<단축>   (지난 N 단위)
+      1m                            → <field> >= startOfDay("-1M")  (지난 N개월, 그 날 00:00부터)
       YYYY-MM-DD                    → <field> >= "..."     (그 날짜 이후)
-      <=YYYY-MM-DD                  → <field> <= "..."
+      <=YYYY-MM-DD                  → <field> < "다음 날"   (그 날 하루 포함)
       <YYYY-MM-DD                   → <field> < "..."
       >=YYYY-MM-DD                  → <field> >= "..."
-      >YYYY-MM-DD                   → <field> > "..."
-      YYYY-MM-DD..YYYY-MM-DD        → <field> >= A AND <field> <= B  (inclusive)
+      >YYYY-MM-DD                   → <field> >= "다음 날"  (그 날 하루 제외)
+      YYYY-MM-DD..YYYY-MM-DD        → <field> >= A AND <field> < B+1일  (양 끝 포함)
       YYYY-MM-DD~YYYY-MM-DD         → 동상 (alias)
+
+    created/updated는 datetime 필드라 날짜만 쓰면 그 날 00:00을 뜻한다. 그래서 끝 날짜를
+    포함하려면 다음 날 00:00 미만으로 써야 한다. 달력에 없는 날짜는 QueryError.
 
     비교 연산자 형식은 `--due` 와 동일 — stale 티켓 쿼리(`updated <= "..."`) 가능.
     범위는 절대 날짜끼리만. 단축형('7d') 과 섞을 수 없음.
     """
     value = value.strip()
-    range_clause = _date_range_clause(field, value)
+    range_clause = _date_range_clause(field, value, datetime_field=True)
     if range_clause is not None:
         return range_clause
-    if _UPDATED_SHORTHAND.match(value):
+    short = _UPDATED_SHORTHAND.match(value)
+    if short:
+        amount, unit = short.groups()
+        if unit == "m":
+            # JQL 날짜 리터럴의 상대 단위는 w/d/h/m(분)뿐이라 '-1m'은 1분 전이다.
+            # 도움말의 '1m'은 한 달 뜻이므로 월 단위(M)를 받는 함수 인자로 쓴다.
+            # Atlassian 문서의 인자 예시는 모두 따옴표가 있는 startOfDay("-1M") 형태다.
+            return f'{field} >= startOfDay("-{amount}M")'
         return f"{field} >= -{value}"
     if _DATE_ONLY.match(value):
+        _parse_day(value)
         return f'{field} >= "{value}"'
     m = _DATE_WITH_OP.match(value)
     if m:
-        return f'{field} {m.group(1)} "{m.group(2)}"'
+        op, day = m.groups()
+        _parse_day(day)
+        # datetime 필드라 날짜 하루 전체를 포함/제외하도록 경계를 다음 날 00:00으로 옮긴다.
+        if op == "<=":
+            return f'{field} < "{_next_day(day)}"'
+        if op == ">":
+            return f'{field} >= "{_next_day(day)}"'
+        return f'{field} {op} "{day}"'
     raise QueryError(
         f"{field} 값 형식 미지원: {value!r}\n"
         "  지원: '7d'/'24h'/'2w'/'1m' 단축, 'YYYY-MM-DD', '<=YYYY-MM-DD'/'>=YYYY-MM-DD'/'<YYYY-MM-DD'/'>YYYY-MM-DD',\n"
@@ -133,16 +161,40 @@ _SP_WITH_OP = re.compile(r"^(<=|>=|<|>)\s*(-?\d+)$")
 _DATE_RANGE = re.compile(r"^(\d{4}-\d{2}-\d{2})\s*(?:\.\.|~)\s*(\d{4}-\d{2}-\d{2})$")
 
 
-def _date_range_clause(field: str, value: str) -> str | None:
-    """범위 표현이면 inclusive JQL 절, 아니면 None."""
+def _parse_day(day: str) -> _dt.date:
+    """정규식은 통과하지만 달력에 없는 날짜(2026-02-30, 2026-13-01)를 QueryError로."""
+    try:
+        return _dt.date.fromisoformat(day)
+    except ValueError:
+        raise QueryError(f"없는 날짜: {day!r} (YYYY-MM-DD, 실제 달력 날짜만)") from None
+
+
+def _next_day(day: str) -> str:
+    try:
+        return (_parse_day(day) + _dt.timedelta(days=1)).isoformat()
+    except OverflowError:
+        # 9999-12-31 의 다음 날은 표현할 수 없다.
+        raise QueryError(f"날짜가 범위를 벗어남: {day!r}") from None
+
+
+def _date_range_clause(field: str, value: str, *, datetime_field: bool = False) -> str | None:
+    """범위 표현이면 inclusive JQL 절, 아니면 None.
+
+    created/updated 같은 datetime 필드에서 `<= "2026-03-31"`은 31일 00:00까지만
+    잡아 끝 날짜 하루가 빠진다. 그래서 datetime 필드는 `< 끝날짜+1일`로 쓴다.
+    """
     m = _DATE_RANGE.match(value)
     if not m:
         return None
     start, end = m.group(1), m.group(2)
+    _parse_day(start)
+    _parse_day(end)
     if start > end:
         raise QueryError(
             f"{field} 범위의 시작이 끝보다 늦음: {start} > {end}"
         )
+    if datetime_field:
+        return f'{field} >= "{start}" AND {field} < "{_next_day(end)}"'
     return f'{field} >= "{start}" AND {field} <= "{end}"'
 
 
@@ -173,9 +225,11 @@ def _due_clause(value: str) -> str:
     if range_clause is not None:
         return range_clause
     if _DATE_ONLY.match(v):
+        _parse_day(v)
         return f'duedate = "{v}"'
     m = _DATE_WITH_OP.match(v)
     if m:
+        _parse_day(m.group(2))
         return f'duedate {m.group(1)} "{m.group(2)}"'
     raise QueryError(
         f"due 값 형식 미지원: {value!r}\n"
@@ -245,7 +299,10 @@ def build_jql(
         clauses.append(_project_clause(projects))
 
     if filters.assignee:
-        clauses.append(_assignee_clause(filters.assignee))
+        clauses.append(_user_clause("assignee", filters.assignee))
+
+    if filters.reporter:
+        clauses.append(_user_clause("reporter", filters.reporter))
 
     if filters.statuses:
         items = ", ".join(f'"{_esc(s)}"' for s in filters.statuses)

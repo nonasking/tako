@@ -11,8 +11,10 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from .paths import DEFAULT_TAKO_DIR, resolve_override_path
 
-DEFAULT_CREDENTIALS_PATH = Path.home() / ".config" / "tako" / "credentials.json"
+
+DEFAULT_CREDENTIALS_PATH = DEFAULT_TAKO_DIR / "credentials.json"
 ENV_OVERRIDE_VAR = "TAKO_CREDENTIALS_PATH"
 
 
@@ -30,12 +32,7 @@ class Credentials:
 
 
 def resolve_credentials_path(explicit: str | os.PathLike[str] | None = None) -> Path:
-    if explicit:
-        return Path(explicit).expanduser()
-    env_value = os.environ.get(ENV_OVERRIDE_VAR)
-    if env_value:
-        return Path(env_value).expanduser()
-    return DEFAULT_CREDENTIALS_PATH
+    return resolve_override_path(explicit, env_var=ENV_OVERRIDE_VAR, default=DEFAULT_CREDENTIALS_PATH)
 
 
 def load_credentials(path: str | os.PathLike[str] | None = None) -> Credentials:
@@ -62,8 +59,13 @@ def write_credentials(creds: Credentials, path: str | os.PathLike[str] | None = 
     target = resolve_credentials_path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = {"email": creds.email, "api_token": creds.api_token}
-    target.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    data = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    # 처음부터 0600으로 만든다. write 후 chmod 하면 잠깐 0644(umask 기준)로 존재한다.
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(data)
     try:
+        # 이미 있던 파일은 O_CREAT 모드가 적용되지 않으므로 한 번 더 맞춘다.
         target.chmod(0o600)
     except OSError as exc:
         sys.stderr.write(f"[경고] {target} chmod 실패: {exc}\n")

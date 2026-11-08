@@ -10,13 +10,31 @@ from typing import Any
 
 import yaml
 
+from .paths import DEFAULT_TAKO_DIR, resolve_override_path
 
-DEFAULT_CONFIG_PATH = Path.home() / ".config" / "tako" / "config.yaml"
+
+DEFAULT_CONFIG_PATH = DEFAULT_TAKO_DIR / "config.yaml"
 ENV_OVERRIDE_VAR = "TAKO_CONFIG_PATH"
+TOKEN_PAGE_URL = "https://id.atlassian.com/manage-profile/security/api-tokens"
 
 
 class ConfigError(Exception):
     pass
+
+
+class ConfigNotFoundError(ConfigError):
+    """설정 파일 자체가 없음 — 첫 실행. 호출자가 init 제안으로 분기한다."""
+
+
+def normalize_site(value: str) -> str:
+    """'https://x.atlassian.net/jira/' 처럼 붙여 넣어도 호스트만 남긴다.
+
+    그대로 쓰면 요청 URL이 'https://https//x...' 가 되어 알아보기 힘든 네트워크 오류로 끝난다.
+    """
+    site = value.strip()
+    if "://" in site:
+        site = site.split("://", 1)[1]
+    return site.split("/", 1)[0].strip()
 
 
 @dataclass(frozen=True)
@@ -49,6 +67,9 @@ class TakoConfig:
     allowed_issue_types: tuple[str, ...]
     auto_fill: AutoFillRules
     epic_aliases: dict[str, str] = field(default_factory=dict)
+    # 초안 파일 편집(tako new 의 e / --edit)에 쓸 에디터 명령.
+    # 'code --wait' 처럼 인자 포함 가능. 없으면 $EDITOR → $VISUAL → vi 순.
+    editor: str | None = None
 
     def resolve_epic(self, alias_or_key: str | None) -> str | None:
         if not alias_or_key:
@@ -57,18 +78,13 @@ class TakoConfig:
 
 
 def resolve_config_path(explicit: str | os.PathLike[str] | None = None) -> Path:
-    if explicit:
-        return Path(explicit).expanduser()
-    env_value = os.environ.get(ENV_OVERRIDE_VAR)
-    if env_value:
-        return Path(env_value).expanduser()
-    return DEFAULT_CONFIG_PATH
+    return resolve_override_path(explicit, env_var=ENV_OVERRIDE_VAR, default=DEFAULT_CONFIG_PATH)
 
 
 def load_config(path: str | os.PathLike[str] | None = None) -> TakoConfig:
     target = resolve_config_path(path)
     if not target.exists():
-        raise ConfigError(f"설정 파일이 없습니다: {target}\n`tako init` 또는 수동 작성 필요.")
+        raise ConfigNotFoundError(f"설정 파일이 없습니다: {target}\n`tako init` 또는 수동 작성 필요.")
     try:
         raw = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as exc:
@@ -84,7 +100,9 @@ def _build_config(raw: dict[str, Any]) -> TakoConfig:
     if not isinstance(jira_raw, dict):
         raise ConfigError("jira 블록 누락 또는 형식 틀림.")
 
-    site = _require_str(jira_raw, "jira.site")
+    site = normalize_site(_require_str(jira_raw, "jira.site"))
+    if not site:
+        raise ConfigError("jira.site 에 호스트가 없음 (예: mycompany.atlassian.net)")
     default_project = _require_str(jira_raw, "jira.default_project")
     default_issue_type = _require_str(jira_raw, "jira.default_issue_type")
 
@@ -128,6 +146,13 @@ def _build_config(raw: dict[str, Any]) -> TakoConfig:
         labels=bool(auto_fill_raw.get("labels", False)),
     )
 
+    editor_raw = raw.get("editor")
+    editor: str | None = None
+    if editor_raw is not None:
+        if not isinstance(editor_raw, str) or not editor_raw.strip():
+            raise ConfigError("editor 가 문자열이 아니거나 비었음.")
+        editor = editor_raw.strip()
+
     epic_aliases_raw = raw.get("epic_aliases") or {}
     if not isinstance(epic_aliases_raw, dict):
         raise ConfigError("epic_aliases 가 매핑이 아님.")
@@ -149,6 +174,7 @@ def _build_config(raw: dict[str, Any]) -> TakoConfig:
         allowed_issue_types=allowed,
         auto_fill=auto_fill,
         epic_aliases=epic_aliases,
+        editor=editor,
     )
 
 
@@ -161,6 +187,11 @@ def _require_str(d: dict[str, Any], dotted_key: str) -> str:
 
 
 def first_run_guide(target_path: Path | None = None) -> str:
+    """설정이 없을 때 띄우는 안내.
+
+    수동 예시를 파일 참조가 아니라 본문에 직접 박아둔다 — PyPI 로 설치한 사용자는
+    저장소를 받은 적이 없어 config.example.yaml 을 가지고 있지 않다.
+    """
     target = target_path or DEFAULT_CONFIG_PATH
     return (
         "tako 처음 사용 — 설정 파일이 없음.\n"
@@ -168,12 +199,20 @@ def first_run_guide(target_path: Path | None = None) -> str:
         "  방법 1) 자동 (추천):\n"
         "     tako init\n"
         "\n"
-        "  방법 2) 수동:\n"
-        f"     mkdir -p {target.parent} && cp config.example.yaml {target}\n"
-        "     그 후 jira.site / default_project / default_issue_type 값을 본인 환경에 맞게 수정.\n"
+        f"  방법 2) 수동 — {target} 을 만들고 아래를 넣는다:\n"
+        "\n"
+        "     jira:\n"
+        "       site: mycompany.atlassian.net\n"
+        "       default_project: WL\n"
+        "       default_issue_type: Task\n"
+        "     issue_types:\n"
+        "       Task: {}\n"
+        "\n"
+        "     인증은 별도 파일이다 — tako init 이 같이 만들어 준다.\n"
         "\n"
         "issue_types 는 키 이름만 정의해도 v1 에서 동작.\n"
-        "다른 경로 쓰려면 TAKO_CONFIG_PATH 환경변수로 지정 가능."
+        "다른 경로 쓰려면 TAKO_CONFIG_PATH 환경변수로 지정 가능.\n"
+        "전체 예시: https://github.com/nonasking/tako/blob/develop/config.example.yaml"
     )
 
 
@@ -183,8 +222,9 @@ def interactive_init(
     force: bool = False,
     credentials_target: Path | None = None,
 ) -> tuple[Path, Path]:
-    # 지연 import — config 가 평소엔 prompts/auth 에 의존하지 않음
+    # 지연 import — config 가 평소엔 prompts/auth/browser 에 의존하지 않음
     from .auth import Credentials, resolve_credentials_path, write_credentials
+    from .browser import open_url
     from .prompts import ask_secret, ask_text, confirm, stdin_is_tty
 
     path = (target or resolve_config_path()).expanduser()
@@ -207,14 +247,19 @@ def interactive_init(
 
     sys.stderr.write("tako init — 5개 항목 + 선택 1개 입력.\n\n")
 
-    site = ask_text("Atlassian 도메인 (예: mycompany.atlassian.net)")
+    site = normalize_site(ask_text("Atlassian 도메인 (예: mycompany.atlassian.net)"))
     project = ask_text("기본 프로젝트 키 (예: WL)")
     issue_type = ask_text("기본 이슈 타입 (예: Task, 기능변경)")
     email = ask_text("Atlassian 이메일")
-    token = ask_secret(
-        "Atlassian API 토큰 "
-        "(https://id.atlassian.com/manage-profile/security/api-tokens)"
-    )
+    # 토큰 발급은 브라우저를 거쳐야 하는 유일한 단계 — 여기서 길을 잃는 사람이 제일 많다.
+    if confirm("\nAPI 토큰 발급 페이지를 브라우저에서 열까?", default=True):
+        if open_url(TOKEN_PAGE_URL):
+            sys.stderr.write("  브라우저를 열었다. 'Create API token' 으로 만든 뒤 복사해 온다.\n")
+        else:
+            sys.stderr.write(f"  브라우저를 못 열었다 — 직접 접속: {TOKEN_PAGE_URL}\n")
+    else:
+        sys.stderr.write(f"  발급 주소: {TOKEN_PAGE_URL}\n")
+    token = ask_secret("Atlassian API 토큰 (화면에 표시되지 않음)")
     default_assignee = ask_text(
         "기본 담당자 (선택, 'me'/이메일/accountId, 없으면 Enter)",
         default="",

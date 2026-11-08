@@ -11,9 +11,9 @@ Every path — shell or slash command — funnels into the same dispatcher, and 
 ```mermaid
 flowchart TD
     SLASH["Claude Code slash commands<br/>/tako · /tako-read · /tako-check · /tako-update · /tako-retype · /tako-list · /tako-guide<br/>(LLM drafts title + body from session context)"]
-    SHELL["shell<br/>tako new · list · show · update · retype · fields · guide · init"]
+    SHELL["shell<br/>tako new · list · show · update · retype · fields · guide · slash · init"]
     SLASH -->|"builds the shell call"| SHELL
-    SHELL --> MAIN["main.py — argparse dispatcher (run)<br/>cmd_new · cmd_list · cmd_edit · cmd_show (+ cmd_common)"]
+    SHELL --> MAIN["main.py — argparse dispatcher (run)<br/>cmd_new · cmd_list · cmd_edit · cmd_show · cmd_fields (+ cmd_common)"]
 
     MAIN --> CFG["config.py<br/>~/.config/tako/config.yaml<br/>site · default project · issue types · field IDs · epic aliases"]
     MAIN --> AUTH["auth.py<br/>~/.config/tako/credentials.json (chmod 0600)"]
@@ -25,29 +25,49 @@ flowchart TD
     PREVIEW -->|"n"| CANCEL["cancel — exit 1, no REST call"]
     PREVIEW -->|"Y"| CLIENT
 
-    CFG --> CLIENT["jira_client.py<br/>one requests.Session (reused)<br/>retries: network · 429 (Retry-After) · idempotent-only 5xx<br/>_format_error → 401 / 403 / 400·422 / 429 / 5xx"]
+    CFG --> CLIENT["jira_client.py<br/>one requests.Session (reused)<br/>retries: unsent requests · 429 (Retry-After) · idempotent-only otherwise<br/>_format_error → 401 / 403 / 400·422 / 429 / 5xx"]
     AUTH --> CLIENT
     CLIENT <--> ADF["markdown ↔ ADF<br/>md-to-adf · adf_to_md.py"]
     CLIENT --> REST["Jira Cloud REST v3<br/>POST /issue · POST /search/jql · GET·PUT /issue/&lt;key&gt;<br/>/issue/&lt;key&gt;/editmeta · /myself · /user/search<br/>/mypermissions · /field · /issueLink"]
     REST --> OUT["issue key + URL (clipboard.py auto-copy)<br/>· text table · JSON · CSV"]
 ```
 
-Meaningful failures (400/422/403) are reported as-is. Retries (up to 2 extra attempts): dropped connections and 429 — respecting `Retry-After` — always; 5xx only for idempotent calls. `POST /issue` is *never* retried on 5xx, since the server may have already created the ticket. Links are a *separate* request after creation — if a link fails the ticket still stands, and only the failure is reported.
+Meaningful failures (400/422/403) are reported as-is. Retries (up to 2 extra attempts): failures that happen before the request reaches Jira (connection refused, DNS, connect timeout, an unreachable proxy, certificate verification) and 429 — respecting `Retry-After` — always; anything after the request may have been sent (read timeout, dropped or truncated response, TLS error, 5xx) only for idempotent calls. `POST /issue` and `POST /issueLink` are *never* retried in that second group, since the server may have already acted; the error then says to check Jira before running the command again. Links are a *separate* request after creation — if a link fails the ticket still stands, and only the failure is reported.
 
 ## Prerequisites
 
 - macOS / Linux
-- Python ≥ 3.10
 - An Atlassian Cloud account + API token ([id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens))
 - Optional: [Claude Code](https://docs.anthropic.com/claude-code) — only if you use session-context mode
+
+You do **not** need to install Python, git, or pip yourself. The installer handles that.
 
 ## Install
 
 ```bash
-git clone <repo-url> tako && cd tako
-pip install -e .
-./install.sh        # register slash commands (optional)
+curl -fsSL https://github.com/nonasking/tako/raw/develop/get-tako.sh | bash
 ```
+
+This installs [uv](https://docs.astral.sh/uv/) if it isn't already there, then puts tako in its own isolated environment. Your system Python is never touched — macOS ships 3.9, which is too old, so uv fetches a private 3.10+ build when needed.
+
+Rather not pipe a script into your shell? These are equivalent:
+
+```bash
+uv tool install takopy     # if you have uv
+pipx install takopy        # if you have pipx
+```
+
+Re-running any of the three upgrades an existing install.
+
+<details>
+<summary>From source (for working on tako itself)</summary>
+
+```bash
+git clone https://github.com/nonasking/tako.git && cd tako
+pip install -e .
+```
+
+</details>
 
 ## First run
 
@@ -60,7 +80,25 @@ Enter 5 items (site domain / default project / default issue type / email / API 
 - `~/.config/tako/config.yaml` — site·project·issue types
 - `~/.config/tako/credentials.json` — email·token (chmod 0600)
 
-If the files exist, it asks before overwriting. Skip with `--force`. To write them by hand, copy [`config.example.yaml`](./config.example.yaml) and edit.
+`tako init` offers to open the API-token page in your browser, so you don't have to hunt for it. If the files already exist it asks before overwriting; skip that with `--force`.
+
+Forget to run it? Any command that needs config will offer to run `tako init` for you — but only when you're at a terminal. In a script or a slash command it prints instructions and exits instead, so automation never hangs waiting for input.
+
+To write the files by hand instead, see [`config.example.yaml`](./config.example.yaml).
+
+## Slash commands (optional)
+
+Only needed for Claude Code session-context mode:
+
+```bash
+tako slash install          # copies /tako, /tako-read, … into ~/.claude/commands/
+tako slash install --force  # refresh them after upgrading tako
+tako slash list             # show what ships with the package
+```
+
+Existing files are left alone unless you pass `--force`, so local edits survive. Restart Claude Code afterwards.
+
+If you cloned the repo and want to *edit* the commands, run `./install.sh` instead — it symlinks them so your changes apply immediately.
 
 ## Usage — two modes
 
@@ -78,10 +116,16 @@ tako new
 #  Story points (integer, Enter for none):
 #  Due date YYYY-MM-DD (Enter for none):
 #  Tickets to link (KEY[:TYPE], comma-separated, Enter for none):
-#  → preview → create in Jira? (Y/n)
+#  → preview → create in Jira? (Y/n/e=edit)
 
 # pre-specify some of it
 tako new --project WL --issue-type 기능변경 --assignee me
+
+# skip the question relay — write the draft in your editor from the start
+tako new --edit
+
+# create from a draft file (YAML frontmatter + markdown body)
+tako new --draft-file my-draft.md --issue-type 기능변경
 
 # create a sub-task — parent key + the site's sub-task issue-type name
 tako new --project WL --issue-type 하위작업 --parent WL-9058 \
@@ -135,7 +179,9 @@ tako fields set story_points customfield_10016
 
 `tako fields detect <name>` without `--save` only prints the result and doesn't touch config (auto-writing config could lose comments). Supported names: `story_points` (v1.x).
 
-Flow: input → preview → Y/n → REST → key + links. No Claude Code needed.
+Flow: input → preview → Y/n/e → REST → key + links. No Claude Code needed.
+
+At the preview confirmation, answering `e` opens the draft in your editor as a file — YAML frontmatter for the fields, markdown body below — so multi-line fixes don't mean retyping everything. Save and close to get a fresh preview; broken edits reopen the same file instead of losing your work. The frontmatter accepts `project, summary, parent, labels, assignee, reporter, story_points, duedate, links`. The issue type is deliberately *not* editable there (it can't be changed after creation either) — pass it via `--issue-type`. The editor is resolved as config `editor:` → `$EDITOR` → `$VISUAL` → `vi`; commands with arguments work (`editor: code --wait`).
 
 Right after creation, the ticket URL is auto-copied to the system clipboard (macOS `pbcopy` / Linux `xclip` or `xsel`). Turn it off with `jira.auto_copy_url: false` in config. In environments without those tools it's silently skipped — creation itself is unaffected.
 
@@ -233,6 +279,7 @@ tako list --type 에픽 --limit 50
 tako list --parent WL-9200          # child issues
 tako list --label backend --query 정렬
 tako list --project WL --project ABC --assignee me   # multiple projects at once
+tako list --reporter me --updated 30d              # tickets you filed
 
 # advanced — raw JQL (ignores other args)
 tako list --jql "project = WL AND assignee = currentUser() AND duedate < now()"
@@ -243,13 +290,19 @@ tako list --assignee me --json
 # to Excel (UTF-8 BOM CSV — opens in Excel on double-click)
 tako list --assignee me --csv --output my-issues.csv
 tako list --assignee me --csv > my-issues.csv   # stdout redirect also works
+
+# open in the browser (after the table is printed)
+tako list --assignee me --open              # one tab: the same JQL on Jira's issue search page
+tako list --parent WL-9200 --open-each      # one tab per ticket (asks first above 20)
 ```
+
+`--open` is the light option — a single tab showing the same list inside Jira's own UI, with the filter still editable there. `--open-each` opens every result as its own tab, which is handy for reviewing a handful one by one; past 20 results it asks for confirmation in a TTY and refuses otherwise, to keep `--all` from opening hundreds of tabs. Both run only after the output is written and never change the exit code; on a platform where the browser can't be opened (Windows), the URLs are printed to stderr instead.
 
 `--output / -o` never overwrites. If the file already exists, a KST timestamp is inserted before the extension
 (`my-issues.csv` → `my-issues-2026-08-03_142530.csv`) and the path actually written is printed to stderr.
 Missing parent directories are created. Note that a shell redirect (`>`) is your shell's job, so it still truncates.
 
-Supported args: `--assignee` (me / email / accountId), `--project` (repeatable, query multiple projects at once), `--status` (repeatable), `--type` (repeatable), `--parent`, `--label` (repeatable), `--updated` / `--created` (`7d`/`1w`/`YYYY-MM-DD` / comparisons like `<=YYYY-MM-DD` / `YYYY-MM-DD..YYYY-MM-DD` range), `--due` (`overdue` / `none` / `set` / `YYYY-MM-DD` / `<=YYYY-MM-DD` etc. / range), `--sp` (integer / `>=N` / `<=N` / `none` / `set`), `--query`, `--jql`, `--limit` (default 20 — caps total results, auto-paging past 100), `--all` (fetch everything, ignores `--limit`), `--json`, `--csv`, `--output / -o`, `--wizard / -i` (interactive input).
+Supported args: `--assignee` / `--reporter` (me / email / accountId), `--project` (repeatable, query multiple projects at once), `--status` (repeatable), `--type` (repeatable), `--parent`, `--label` (repeatable), `--updated` / `--created` (`7d`/`1w`/`YYYY-MM-DD` / comparisons like `<=YYYY-MM-DD` / `YYYY-MM-DD..YYYY-MM-DD` range), `--due` (`overdue` / `none` / `set` / `YYYY-MM-DD` / `<=YYYY-MM-DD` etc. / range), `--sp` (integer / `>=N` / `<=N` / `none` / `set`), `--query`, `--jql`, `--limit` (default 20 — caps total results, auto-paging past 100), `--all` (fetch everything, ignores `--limit`), `--json`, `--csv`, `--output / -o`, `--open` (Jira search page in one tab), `--open-each` (one tab per ticket, confirm above 20), `--wizard / -i` (interactive input).
 
 The *range* form for `--updated` / `--created` / `--due` is `YYYY-MM-DD..YYYY-MM-DD` or `YYYY-MM-DD~YYYY-MM-DD` (alias), both endpoints inclusive. It can't be mixed with shorthand (`7d`). If the start is later than the end, it's rejected.
 
@@ -261,9 +314,20 @@ tako list --due 2026-06-01..2026-06-30         # due in June
 
 When the filter gets long for one line, use `tako list --wizard` (or `-i`) — it asks per item and skips blank input. It composes with CLI args (e.g. `tako list -i --assignee me` skips the assignee prompt and asks the rest). Right after the output, it prints a *one-line shell command* that reproduces the same query to stderr as a hint, so you can save it as an alias if you like it.
 
+In wizard mode the table gets a row-number column, and once it's printed a *browser prompt* follows so you pick what to open after seeing the results — no CSV round-trip needed:
+
+```
+브라우저로 열기 (Enter=끝 / s=검색 페이지 / a=전부 / 번호·키 예: 1,3 5-7 WL-12): 1 3
+[브라우저] 탭 2 개 열음
+브라우저로 열기 (...): a
+티켓 30 건을 탭으로 전부 열까요? (y/N): y
+```
+
+`s` opens the search page (same as `--open`), `a` opens every result (same as `--open-each`, with the same confirmation above 20), and row numbers, ranges or issue keys open just those. The prompt repeats until you press Enter. It only appears for the default table output without `--open`/`--open-each` on the command line; if you chose `s` or `a`, the shell hint at the end includes the matching flag.
+
 **`전체` / `all` / `*` keyword** — usable on any filter (both interactive and CLI):
 
-- Status / type / label / assignee: `전체` (all) = same as blank input (that condition isn't applied).
+- Status / type / label / assignee / reporter: `전체` (all) = same as blank input (that condition isn't applied).
 - Project: `전체` = ignore `default_project` too + drop the `project` clause from the JQL entirely → all projects on the site.
 - Max results (`--limit` / interactive limit step): `전체` = auto `--all` + 100 per page to the end.
 
@@ -276,7 +340,7 @@ tako list -i  # answering "Project: 전체", "Max: 전체" in interactive mode d
 
 `--all` auto-repeats every page (100 max per page). Beware large result sets — 943 issues span about 10 pages. A `--limit` above 100 also pages automatically, but stops at the cap (e.g. `--limit 250` → 3 requests, 250 rows).
 
-Default columns: `key, status, type, assignee, created, updated, duedate, summary, parent, url`. If your config has a `jira.fields.story_points` mapping, a `story_points` column is auto-added right after `type`. Without the mapping, SP filter/column are disabled with a notice.
+Default columns: `key, status, type, assignee, reporter, created, updated, duedate, summary, parent, url`. If your config has a `jira.fields.story_points` mapping, a `story_points` column is auto-added right after `type`. Without the mapping, SP filter/column are disabled with a notice.
 
 ```bash
 # due / SP filter examples
@@ -299,7 +363,7 @@ Claude Code slash commands do *natural language → arg mapping*:
 /tako-list in-progress in the last month + label backend
 ```
 
-> Assignee by *Korean name* is unsupported in v1.x. Only `me` / email / accountId.
+> Assignee / reporter by *Korean name* is unsupported in v1.x. Only `me` / email / accountId.
 
 ### G) Customize the body-writing guide (`tako guide` / `/tako-guide`)
 
@@ -366,21 +430,23 @@ Honest trade-offs:
 
 ```
 tako/
-├── commands/
-│   ├── tako.md             /tako slash command (create)
-│   ├── tako-read.md        /tako-read slash command (interpret a ticket)
-│   ├── tako-update.md      /tako-update slash command (edit title/body)
-│   ├── tako-check.md       /tako-check slash command (review)
-│   ├── tako-retype.md      /tako-retype slash command (change issue type)
-│   ├── tako-list.md        /tako-list slash command (list)
-│   └── tako-guide.md       /tako-guide slash command (customize body guide)
 ├── tako/                   Python package
-│   ├── main.py              entry point — argparse + dispatch (init / guide / fields stay here)
+│   ├── commands/            slash commands — shipped inside the package so a
+│   │   │                    PyPI install can lay them down without the repo
+│   │   ├── tako.md          /tako (create)
+│   │   ├── tako-read.md     /tako-read (interpret a ticket)
+│   │   ├── tako-update.md   /tako-update (edit title/body)
+│   │   ├── tako-check.md    /tako-check (review)
+│   │   ├── tako-retype.md   /tako-retype (change issue type)
+│   │   ├── tako-list.md     /tako-list (list)
+│   │   └── tako-guide.md    /tako-guide (customize body guide)
+│   ├── main.py              entry point — argparse + dispatch (init / guide / slash stay here)
 │   ├── cmd_common.py        shared subcommand helpers (config/creds → client, KST stamps)
 │   ├── cmd_new.py           new / preview / build / interactive (create family)
 │   ├── cmd_list.py          list — filters → JQL → pagination → text/csv/json
 │   ├── cmd_edit.py          update / retype (edit family)
 │   ├── cmd_show.py          show (single-issue view)
+│   ├── cmd_fields.py        fields set / detect (custom field mapping)
 │   ├── auth.py              credentials loader
 │   ├── config.py            settings + init wizard
 │   ├── jira_client.py       REST client (session reuse, retry policy) + md→ADF entry
@@ -388,15 +454,21 @@ tako/
 │   ├── issue_draft.py       payload builder + preview
 │   ├── list_query.py        list filters → JQL clauses
 │   ├── list_output.py       list formatters — CSV / width-aware text table
-│   ├── patterns.py          shared issue-key / accountId patterns
+│   ├── patterns.py          shared issue-key / browse-URL / accountId / "me" patterns
+│   ├── paths.py             path resolution rule (explicit > env var > default)
 │   ├── fields.py            custom field mapping helper
 │   ├── prompts.py           interactive input (EOF-safe)
 │   ├── guide.py             body-guide load/create
+│   ├── slash.py             lay slash commands down into ~/.claude/commands/
 │   ├── clipboard.py         best-effort URL copy (pbcopy / xclip / xsel)
+│   ├── browser.py           best-effort URL open (open / xdg-open)
 │   └── templates/           bundled resources (default guide, etc.)
+├── .github/workflows/      ci (tests + shellcheck) · release (tag → PyPI)
 ├── config.example.yaml     example config
+├── docs/                   design notes (distribution review, …)
 ├── tests/                  stdlib unittest suite (no network)
-└── install.sh              register slash commands (optional)
+├── get-tako.sh             one-line installer (uv → PyPI → PATH)
+└── install.sh              symlink slash commands, for repo checkouts
 ```
 
 ## Tests
@@ -408,11 +480,34 @@ python -m unittest discover -s tests -v    # all
 python -m unittest tests.test_list_query   # a single module
 ```
 
-Covers the pure logic: JQL building (`test_list_query.py` — shorthand/comparison/range dates, due, story points, escaping), config validation messages (`test_config.py`), REST error mapping, the retry policy, and the ADF conversion boundary (`test_jira_client.py`), list pagination / filter assembly / shell hints (`test_cmd_list.py`), CSV and width-aware table formatting (`test_list_output.py`), prompt EOF handling (`test_prompts.py`), issue-type matching for `retype` (`test_retype.py`), the body guide (`test_guide.py`), the sub-task/link lines of `show` (`test_show_render.py`), the reporter path — payload, preview, and the permission pre-check (`test_reporter.py`), and `--output` path handling — never overwrite, timestamp placement, parent-dir creation (`test_list_output_path.py`).
+Covers the pure logic: JQL building (`test_list_query.py` — shorthand/comparison/range dates, calendar-invalid and out-of-range dates, due, story points, escaping), config validation messages (`test_config.py`), REST error mapping, the retry policy, and the ADF conversion boundary (`test_jira_client.py`), ADF → markdown rendering for `show` — panels, tables, task lists, inline nodes, schema-violating values (`test_adf_to_md.py`), the regressions pinned after review — `update` keeping existing ADF on append, which network failures are retried for which calls, the "may have been applied" hint (`test_review_followups.py`), list pagination / filter assembly / shell hints (`test_cmd_list.py`), CSV and width-aware table formatting (`test_list_output.py`), prompt EOF handling (`test_prompts.py`), issue-type matching for `retype` (`test_retype.py`), the body guide (`test_guide.py`), the sub-task/link lines of `show` (`test_show_render.py`), the reporter path — payload, preview, and the permission pre-check (`test_reporter.py`), the `new` flow — arg → payload assembly, `--draft-file` conflicts, assignee/reporter resolution order (`test_cmd_new.py`), the `fields detect` hint pointing at the config actually in use (`test_cmd_fields.py`), and `--output` path handling — never overwrite, timestamp placement, parent-dir creation (`test_list_output_path.py`). Two more guard the install path: the first-run contract — never prompt when stdin isn't a TTY, and never point at a file only a repo checkout would have (`test_first_run.py`), and slash-command installation — packaging completeness, skip-unless-forced, dangling-symlink repair (`test_slash.py`).
+
+## Releasing
+
+Published to PyPI as [`takopy`](https://pypi.org/project/takopy/) (the command stays `tako`; the plain `tako` name was already taken). No API token is stored anywhere — [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/) authenticates the workflow over OIDC.
+
+One-time setup on PyPI → *Publishing* → *Add a new pending publisher*:
+
+| Field | Value |
+|---|---|
+| PyPI project name | `takopy` |
+| Owner | `nonasking` |
+| Repository | `tako` |
+| Workflow name | `release.yml` |
+| Environment | `pypi` |
+
+Then every release is:
+
+```bash
+# bump version in pyproject.toml first — the workflow refuses a tag that disagrees with it
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+`release.yml` verifies tag ↔ version, runs the tests, builds an sdist + wheel, and publishes. `ci.yml` runs the suite on macOS and Linux against Python 3.10 and 3.13, and shellchecks both installers.
 
 ## Troubleshooting
 
-- `tako: command not found` — not on PATH. `pip install -e .` didn't finish, or a different venv. As a fallback, `python -m tako ...` behaves identically.
+- `tako: command not found` — the install directory isn't on your PATH. Run `uv tool update-shell` and open a new terminal. As a fallback, `uv tool run --from takopy tako ...` (or `python -m tako ...` in a source checkout) behaves identically.
 - `설정 파일이 없습니다` (no config file) — `tako init`. For a different path, use the `TAKO_CONFIG_PATH` environment variable.
 - `creds 없음` (no creds) — same as above.
 - `허용 안 된 이슈 타입` (disallowed issue type) — add it under `issue_types` in `~/.config/tako/config.yaml`.

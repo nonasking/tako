@@ -1,0 +1,10 @@
+blank_issues_enabled: true
+
+contact_links:
+  - name: Setup and usage docs
+    url: https://github.com/nonasking/tako#readme
+    about: Install, first run, and every command with examples.
+
+  - name: Troubleshooting
+    url: https://github.com/nonasking/tako#troubleshooting
+    about: Common errors — command not found, 401/403, missing custom fields.

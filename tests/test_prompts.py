@@ -12,7 +12,7 @@ import sys
 import unittest
 from contextlib import redirect_stderr
 
-from tako.prompts import ask_text, confirm
+from tako.prompts import ask_text, confirm, confirm_or_edit
 
 
 class _StdinPatch:
@@ -62,6 +62,16 @@ class NormalInputTest(unittest.TestCase):
     def test_confirm_korean_yes(self) -> None:
         with _StdinPatch("ㅇ\n"), redirect_stderr(io.StringIO()):
             self.assertTrue(confirm("진행?", default=False))
+
+    def test_confirm_or_edit_answers(self) -> None:
+        for typed, expected in [("\n", "yes"), ("y\n", "yes"), ("e\n", "edit"), ("편집\n", "edit"), ("n\n", "no")]:
+            with _StdinPatch(typed), redirect_stderr(io.StringIO()):
+                self.assertEqual(confirm_or_edit("생성?"), expected)
+
+    def test_confirm_or_edit_eof_exits(self) -> None:
+        with _StdinPatch(""), redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                confirm_or_edit("생성?")
 
 
 if __name__ == "__main__":

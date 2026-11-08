@@ -13,3 +13,5 @@ _backup_*/
 _backup_*.md
 
 .DS_Store
+build/
+dist/

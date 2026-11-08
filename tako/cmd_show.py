@@ -10,7 +10,7 @@ from .adf_to_md import adf_to_markdown
 from .cmd_common import build_client
 from .config import TakoConfig
 from .jira_client import JiraApiError
-from .patterns import extract_issue_key
+from .patterns import browse_url, extract_issue_key
 
 
 def cmd_show(args: Any, cfg: TakoConfig) -> int:
@@ -25,7 +25,7 @@ def cmd_show(args: Any, cfg: TakoConfig) -> int:
         return 2
 
     if args.as_json:
-        payload = {"issue": issue, "comments": comments, "url": f"https://{cfg.jira.site}/browse/{key}"}
+        payload = {"issue": issue, "comments": comments, "url": browse_url(cfg.jira.site, key)}
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
 
@@ -61,7 +61,7 @@ def _render_issue_text(issue: dict[str, Any], comments: list[dict[str, Any]], *,
     lines.append(f"기한:     {duedate}")
     if labels:
         lines.append(f"라벨:     {', '.join(labels)}")
-    lines.append(f"링크:     https://{site}/browse/{key}")
+    lines.append(f"링크:     {browse_url(site, key)}")
 
     children = _child_lines(fields.get("subtasks"))
     if children:

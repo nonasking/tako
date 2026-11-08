@@ -1,11 +1,12 @@
 """tako 진입점 — argparse 정의 + 서브커맨드 디스패치.
 
 서브커맨드 구현은 cmd_*.py 로 분리:
-  cmd_new   new / preview / build / interactive (생성 계열)
-  cmd_list  list (JQL 검색 + 출력)
-  cmd_edit  update / retype (수정 계열)
-  cmd_show  show (조회)
-여기 남는 것: 파서, init / guide / fields (config 만 만지는 가벼운 커맨드), run.
+  cmd_new     new / preview / build / interactive (생성 계열)
+  cmd_list    list (JQL 검색 + 출력)
+  cmd_edit    update / retype (수정 계열)
+  cmd_show    show (조회)
+  cmd_fields  fields set / detect (custom field 매핑)
+여기 남는 것: 파서, init / guide / slash (config 를 로드하지 않는 얇은 커맨드), run.
 """
 
 from __future__ import annotations
@@ -14,28 +15,23 @@ import argparse
 import sys
 
 from . import __version__
-from .cmd_common import build_client, load_config_or_guide
+from .cmd_common import load_config_or_guide
 from .cmd_edit import cmd_retype, cmd_update
+from .cmd_fields import cmd_fields_detect, cmd_fields_set
 from .cmd_list import cmd_list
 from .cmd_new import cmd_build, cmd_interactive, cmd_new, cmd_preview
 from .cmd_show import cmd_show
 from .config import interactive_init, resolve_config_path
 from .auth import resolve_credentials_path
-from .fields import (
-    SEARCH_KEYWORDS,
-    filter_candidates,
-    warn_comment_loss,
-    write_field_mapping,
-)
+from .fields import SEARCH_KEYWORDS
 from .guide import (
     GuideError,
     effective_guide,
     resolve_guide_path,
     write_default_guide,
 )
-from .jira_client import JiraApiError
-from .list_query import DEFAULT_LIST_LIMIT
-from .prompts import ask_text, stdin_is_tty
+from .list_query import DEFAULT_LIST_LIMIT, OPEN_EACH_CAP
+from .slash import SlashError, install_commands, packaged_commands, resolve_commands_dir
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -76,8 +72,25 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="연결할 티켓 KEY[:TYPE] (반복 가능, TYPE 생략 시 'Relates'). 예: --link WL-100 --link 'WL-200:Blocks'",
     )
     new_parser.add_argument("--yes", "-y", action="store_true", help="확인 없이 바로 생성")
+    new_parser.add_argument(
+        "--edit",
+        "-e",
+        action="store_true",
+        help="질문 릴레이 대신 처음부터 에디터로 초안 작성 (TTY 전용). 에디터는 config editor → $EDITOR → $VISUAL → vi 순",
+    )
+    new_parser.add_argument(
+        "--draft-file",
+        dest="draft_file",
+        help="초안 파일(YAML frontmatter + 마크다운 본문)에서 내용 읽기. --summary 등 내용 인자와 병용 불가, --issue-type 만 예외",
+    )
 
-    sub.add_parser("preview", help="stdin JSON → 미리보기 stdout")
+    preview_parser = sub.add_parser("preview", help="stdin JSON → 미리보기 stdout")
+    preview_parser.add_argument(
+        "--draft-file",
+        dest="draft_file",
+        help="stdin JSON 대신 초안 파일에서 읽기",
+    )
+    preview_parser.add_argument("--issue-type", dest="issue_type", help="초안 파일 미리보기 시 이슈 유형 (생략 시 config 기본값)")
     sub.add_parser("build", help="stdin JSON → 페이로드 JSON stdout")
     sub.add_parser("interactive", help="TTY 인터랙티브 → 페이로드 JSON stdout")
 
@@ -88,6 +101,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
     list_parser = sub.add_parser("list", help="JQL 기반 이슈 검색 + 필터링")
     list_parser.add_argument("--assignee", help="담당자: 'me' / 이메일 / accountId")
+    list_parser.add_argument("--reporter", help="보고자: 'me' / 이메일 / accountId")
     list_parser.add_argument(
         "--project",
         action="append",
@@ -98,8 +112,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     list_parser.add_argument("--type", dest="types", action="append", default=[], help="이슈 유형 (반복 가능, 예: --type 에픽)")
     list_parser.add_argument("--parent", help="부모 이슈 키 (예: WL-9200)")
     list_parser.add_argument("--label", action="append", default=[], help="라벨 (반복 가능)")
-    list_parser.add_argument("--updated", help="업데이트 시점: '7d'/'24h'/'2w'/'1m' 단축, 'YYYY-MM-DD', 비교('<=2026-04-01' 등), 범위('2026-05-01..2026-05-15' 또는 '~')")
-    list_parser.add_argument("--created", help="생성 시점: '7d'/'24h'/'2w'/'1m' 단축, 'YYYY-MM-DD', 비교('<=2026-04-01' 등), 범위('2026-05-01..2026-05-15' 또는 '~')")
+    list_parser.add_argument("--updated", help="업데이트 시점: '7d'/'24h'/'2w'/'1m'(m 은 개월) 단축, 'YYYY-MM-DD', 비교('<=2026-04-01' 등), 범위('2026-05-01..2026-05-15' 또는 '~')")
+    list_parser.add_argument("--created", help="생성 시점: '7d'/'24h'/'2w'/'1m'(m 은 개월) 단축, 'YYYY-MM-DD', 비교('<=2026-04-01' 등), 범위('2026-05-01..2026-05-15' 또는 '~')")
     list_parser.add_argument("--due", help="기한: 'overdue'/'none'/'set'/'YYYY-MM-DD'/'<=YYYY-MM-DD' 등, 범위('2026-05-01..2026-05-15' 또는 '~')")
     list_parser.add_argument("--sp", help="스토리포인트: 정수(3) / 비교('>=3','<=8','>0','<13') / 'none' / 'set'")
     list_parser.add_argument("--query", help="제목/본문 텍스트 검색")
@@ -117,6 +131,18 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "-o",
         "--output",
         help="파일에 저장 (생략 시 stdout). 예: --csv -o tako-list.csv",
+    )
+    list_parser.add_argument(
+        "--open",
+        dest="open_search",
+        action="store_true",
+        help="같은 JQL 의 Jira 검색 페이지를 브라우저 탭 하나로 연다",
+    )
+    list_parser.add_argument(
+        "--open-each",
+        dest="open_each",
+        action="store_true",
+        help=f"결과 티켓을 브라우저 탭 하나씩 연다 ({OPEN_EACH_CAP} 건 초과면 확인 필요)",
     )
     list_parser.add_argument(
         "-i",
@@ -185,6 +211,13 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     guide_sub.add_parser("reset", help="개인 가이드를 기본값으로 되돌림")
     guide_sub.add_parser("path", help="개인 가이드 경로 출력")
 
+    slash_parser = sub.add_parser("slash", help="Claude Code 슬래시 커맨드 설치")
+    slash_sub = slash_parser.add_subparsers(dest="slash_command", required=True)
+    slash_install = slash_sub.add_parser("install", help="~/.claude/commands/ 로 복사")
+    slash_install.add_argument("--force", action="store_true", help="기존 파일 덮어쓰기")
+    slash_sub.add_parser("list", help="동봉된 커맨드 목록 출력")
+    slash_sub.add_parser("path", help="설치 대상 경로 출력")
+
     return parser.parse_args(argv)
 
 
@@ -222,101 +255,79 @@ def _cmd_guide(args: argparse.Namespace) -> int:
     return 2
 
 
-def _cmd_fields_set(args: argparse.Namespace) -> int:
-    if args.name not in SEARCH_KEYWORDS:
-        sys.stderr.write(
-            f"[fields] 지원하지 않는 이름: {args.name!r}. 지원: {', '.join(SEARCH_KEYWORDS)}\n"
-        )
-        return 2
-    if not args.field_id.startswith("customfield_"):
-        sys.stderr.write(
-            f"[경고] field_id 가 'customfield_' 로 시작하지 않습니다: {args.field_id!r}\n"
-        )
-    config_path = resolve_config_path(args.config)
-    warn_comment_loss()
+def _cmd_slash(args: argparse.Namespace) -> int:
+    # config 와 무관 — 패키지 동봉 파일을 ~/.claude/commands/ 로 옮기는 일만 한다.
     try:
-        write_field_mapping(args.name, args.field_id, config_path)
-    except (FileNotFoundError, ValueError) as exc:
-        sys.stderr.write(f"[fields] {exc}\n")
+        if args.slash_command == "path":
+            sys.stdout.write(f"{resolve_commands_dir()}\n")
+            return 0
+        if args.slash_command == "list":
+            for name, _ in packaged_commands():
+                sys.stdout.write(f"{name}\n")
+            return 0
+        if args.slash_command == "install":
+            target = resolve_commands_dir()
+            written, skipped = install_commands(force=args.force)
+            for name in written:
+                sys.stderr.write(f"  설치: {name}\n")
+            for name in skipped:
+                sys.stderr.write(f"  건너뜀 (이미 있음): {name}\n")
+            sys.stderr.write(f"\n대상: {target}\n")
+            if skipped:
+                sys.stderr.write("덮어쓰려면: tako slash install --force\n")
+            if written:
+                slashes = " ".join(f"/{n.removesuffix('.md')}" for n in written)
+                sys.stderr.write(f"Claude Code 를 다시 시작하면 쓸 수 있다: {slashes}\n")
+            return 0
+    except SlashError as exc:
+        sys.stderr.write(f"[slash] {exc}\n")
         return 2
-    sys.stderr.write(f"등록 완료: jira.fields.{args.name} = {args.field_id}\n")
-    return 0
+    sys.stderr.write(f"unknown slash command: {args.slash_command}\n")
+    return 2
 
 
-def _cmd_fields_detect(args: argparse.Namespace, cfg) -> int:
-    if args.name not in SEARCH_KEYWORDS:
-        sys.stderr.write(
-            f"[fields] 지원하지 않는 이름: {args.name!r}. 지원: {', '.join(SEARCH_KEYWORDS)}\n"
-        )
-        return 2
-    client = build_client(cfg, args.credentials)
-    sys.stderr.write(f"{cfg.jira.site} 에서 필드 목록 조회 중...\n")
-    try:
-        all_fields = client.list_fields()
-    except JiraApiError as exc:
-        sys.stderr.write(f"[jira] {exc}\n")
-        return 2
-
-    candidates = filter_candidates(args.name, all_fields)
-    if not candidates:
-        sys.stderr.write(f"매칭되는 필드 없음 ({args.name}).\n")
-        return 1
-
-    sys.stderr.write("\n후보:\n")
-    for i, (fid, fname) in enumerate(candidates, 1):
-        sys.stderr.write(f"  {i}) {fid} — {fname!r}\n")
-
-    if len(candidates) == 1:
-        chosen_id, chosen_name = candidates[0]
-        sys.stderr.write(f"\n자동 선택: {chosen_id} ({chosen_name!r})\n")
-    else:
-        if not stdin_is_tty():
-            sys.stderr.write(
-                "\n후보가 여럿이고 TTY 가 아님. tako fields set 으로 직접 등록하세요.\n"
-            )
-            return 1
-        idx_raw = ask_text(f"\n어느 것을 {args.name} 로?", default="1").strip()
-        try:
-            idx = int(idx_raw) - 1
-            if not 0 <= idx < len(candidates):
-                raise ValueError
-        except ValueError:
-            sys.stderr.write("유효하지 않은 번호.\n")
-            return 2
-        chosen_id, chosen_name = candidates[idx]
-
-    if args.save:
-        config_path = resolve_config_path(args.config)
-        warn_comment_loss()
-        try:
-            write_field_mapping(args.name, chosen_id, config_path)
-        except (FileNotFoundError, ValueError) as exc:
-            sys.stderr.write(f"[fields] {exc}\n")
-            return 2
-        sys.stderr.write(f"\n등록 완료: jira.fields.{args.name} = {chosen_id}\n")
-    else:
-        sys.stderr.write(
-            f"\n다음을 ~/.config/tako/config.yaml 의 jira 블록에 추가하세요:\n\n"
-            f"  fields:\n    {args.name}: {chosen_id}\n\n"
-            f"또는 자동 등록: tako fields set {args.name} {chosen_id}\n"
-            f"또는 한 번에:   tako fields detect {args.name} --save\n"
-        )
-
-    print(chosen_id)
-    return 0
+ISSUE_URL = "https://github.com/nonasking/tako/issues"
 
 
 def run(argv: list[str] | None = None) -> int:
+    """진입점 — 예상 못 한 예외를 제보 가능한 형태로 바꿔서 내보낸다.
+
+    사용자가 0 명인 동안에는 스택트레이스가 아무 데도 도착하지 않는다.
+    버전과 제보 경로를 함께 찍어야 리포트가 실제로 온다.
+    """
+    try:
+        return _dispatch(argv)
+    except KeyboardInterrupt:
+        sys.stderr.write("\n중단됨.\n")
+        return 130
+    except BrokenPipeError:
+        # `tako list | head` 처럼 뒤쪽이 먼저 닫힌 경우 — 오류가 아니다.
+        return 0
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        py = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+        sys.stderr.write(
+            f"\n예상하지 못한 오류다 (tako {__version__}, python {py}).\n"
+            f"위 내용을 그대로 붙여 제보해 주면 고칠 수 있다:\n  {ISSUE_URL}\n"
+        )
+        return 1
+
+
+def _dispatch(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
     if args.command == "init":
         return _cmd_init(args)
     if args.command == "guide":
         # config 로드 불필요 — 가이드는 별도 파일.
         return _cmd_guide(args)
+    if args.command == "slash":
+        # config 로드 불필요 — 설정 전에 슬래시 커맨드부터 깔 수 있어야 한다.
+        return _cmd_slash(args)
     if args.command == "fields" and args.fields_command == "set":
         # set 은 config 만 건드림 — 로드는 안 함 (없으면 에러 메시지 자체 처리)
-        return _cmd_fields_set(args)
-    cfg = load_config_or_guide(args.config)
+        return cmd_fields_set(args)
+    cfg = load_config_or_guide(args.config, args.credentials)
     match args.command:
         case "new":
             return cmd_new(args, cfg)
@@ -329,14 +340,14 @@ def run(argv: list[str] | None = None) -> int:
         case "retype":
             return cmd_retype(args, cfg)
         case "preview":
-            return cmd_preview(cfg)
+            return cmd_preview(args, cfg)
         case "build":
             return cmd_build(cfg)
         case "interactive":
             return cmd_interactive(cfg)
         case "fields":
             if args.fields_command == "detect":
-                return _cmd_fields_detect(args, cfg)
+                return cmd_fields_detect(args, cfg)
             sys.stderr.write(f"unknown fields command: {args.fields_command}\n")
             return 2
         case _:

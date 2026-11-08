@@ -61,12 +61,28 @@ def ask_multiline(prompt: str) -> str:
     return sys.stdin.read().rstrip("\n")
 
 
+_YES_ANSWERS = frozenset({"y", "yes", "예", "ㅇ"})
+
+
 def confirm(prompt: str, default: bool = True) -> bool:
     suffix = "(Y/n)" if default else "(y/N)"
     raw = _prompt(f"{prompt} {suffix}: ").strip().lower()
     if not raw:
         return default
-    return raw in {"y", "yes", "예", "ㅇ"}
+    return raw in _YES_ANSWERS
+
+
+def confirm_or_edit(prompt: str) -> str:
+    """Y/n 에 편집(e) 선택지를 더한 확인. 반환: 'yes' | 'no' | 'edit'.
+
+    빈 입력은 yes — confirm 의 기본값 동작과 맞춘다.
+    """
+    raw = _prompt(f"{prompt} (Y/n/e=편집): ").strip().lower()
+    if not raw or raw in _YES_ANSWERS:
+        return "yes"
+    if raw in {"e", "edit", "편집"}:
+        return "edit"
+    return "no"
 
 
 def stdin_is_tty() -> bool:

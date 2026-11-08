@@ -3,6 +3,7 @@
 - text: 사람 친화 표 (render_list_table — 한글 전각 폭 기준 열 정렬)
 - csv:  Excel 친화 CSV (UTF-8 BOM, 한국어 깨짐 방지)
 - json: 원본 응답 (main 쪽에서 그대로 dump)
+- url:  browse / 검색 페이지 주소 조립 (CSV url 열과 --open 계열이 같은 규칙을 쓴다)
 
 행 추출(issue_cells)은 표·CSV 공용 — 값 없는 칸은 빈 문자열로 두고,
 "(미할당)" 같은 표시용 대체 문구는 각 렌더러가 얹는다.
@@ -10,14 +11,18 @@
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 import csv
 import io
 import unicodedata
 from typing import Any
 
+from .patterns import browse_url
+
 
 # SP 매핑 유무에 따라 동적으로 결정 (issues_to_csv 에서 처리)
-_BASE_COLUMNS = ("key", "status", "type", "assignee", "created", "updated", "duedate", "summary", "parent", "url")
+_BASE_COLUMNS = ("key", "status", "type", "assignee", "reporter", "created", "updated", "duedate", "summary", "parent", "url")
 
 
 def issue_cells(issue: dict[str, Any], *, sp_field_id: str | None = None) -> dict[str, str]:
@@ -34,6 +39,7 @@ def issue_cells(issue: dict[str, Any], *, sp_field_id: str | None = None) -> dic
         "type": (f.get("issuetype") or {}).get("name", ""),
         "story_points": sp,
         "assignee": ((f.get("assignee") or {}).get("displayName")) or "",
+        "reporter": ((f.get("reporter") or {}).get("displayName")) or "",
         "created": (f.get("created") or "")[:10],
         "updated": (f.get("updated") or "")[:10],
         "duedate": f.get("duedate") or "",
@@ -64,15 +70,19 @@ def issues_to_csv(
     writer.writerow(columns)
     for it in issues:
         cells = issue_cells(it, sp_field_id=sp_field_id)
-        key = cells["key"]
-        cells["url"] = f"https://{site}/browse/{key}" if key else ""
+        cells["url"] = browse_url(site, cells["key"]) if cells["key"] else ""
         writer.writerow(tuple(cells[c] for c in columns))
     return buf.getvalue()
 
 
+def _char_width(ch: str) -> int:
+    """한 글자의 터미널 칸 수 — 한글 등 동아시아 전각(W/F)은 2칸."""
+    return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+
+
 def display_width(text: str) -> int:
-    """터미널 표시 폭 — 한글 등 동아시아 전각(W/F)은 2칸."""
-    return sum(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in text)
+    """터미널 표시 폭 (칸 수)."""
+    return sum(_char_width(ch) for ch in text)
 
 
 def _fit(cell: str, width: int) -> str:
@@ -80,7 +90,7 @@ def _fit(cell: str, width: int) -> str:
     out: list[str] = []
     used = 0
     for ch in cell:
-        w = 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+        w = _char_width(ch)
         if used + w > width:
             break
         out.append(ch)
@@ -88,30 +98,52 @@ def _fit(cell: str, width: int) -> str:
     return "".join(out) + " " * (width - used)
 
 
-def render_list_table(issues: list[dict[str, Any]], *, sp_field_id: str | None = None) -> str:
-    """사람 친화 표. SP 매핑 있으면 SP 컬럼 추가."""
+def render_list_table(
+    issues: list[dict[str, Any]], *, sp_field_id: str | None = None, numbered: bool = False
+) -> str:
+    """사람 친화 표. SP 매핑 있으면 SP 컬럼 추가.
+
+    numbered=True 면 맨 앞에 1부터 세는 행 번호 열이 붙는다 — 위저드가 표를 찍은 뒤
+    "몇 번을 브라우저로 열까" 물을 때 그 번호를 쓴다. 번호는 issues 순서와 같다.
+    """
     has_sp = bool(sp_field_id)
     if has_sp:
-        header = ("KEY", "상태", "유형", "SP", "담당자", "생성", "업데이트", "기한", "제목")
-        widths = (12, 10, 12, 5, 14, 11, 11, 11, 50)
+        header = ("KEY", "상태", "유형", "SP", "담당자", "보고자", "생성", "업데이트", "기한", "제목")
+        widths = (12, 10, 12, 5, 14, 14, 11, 11, 11, 50)
     else:
-        header = ("KEY", "상태", "유형", "담당자", "생성", "업데이트", "기한", "제목")
-        widths = (12, 10, 12, 14, 11, 11, 11, 55)
+        header = ("KEY", "상태", "유형", "담당자", "보고자", "생성", "업데이트", "기한", "제목")
+        widths = (12, 10, 12, 14, 14, 11, 11, 11, 55)
+    if numbered:
+        header = ("#",) + header
+        # 자릿수 + 여백 1칸, 헤더 '#' 와 구분선이 들어갈 최소 3칸
+        widths = (max(3, len(str(len(issues))) + 1),) + widths
 
     rows: list[tuple[str, ...]] = []
-    for it in issues:
+    for idx, it in enumerate(issues, start=1):
         c = issue_cells(it, sp_field_id=sp_field_id)
         key = c["key"] or "?"
         status = c["status"] or "?"
         itype = c["type"] or "?"
         assignee = c["assignee"] or "(미할당)"
+        reporter = c["reporter"] or "(없음)"
         if has_sp:
-            rows.append((key, status, itype, c["story_points"], assignee, c["created"], c["updated"], c["duedate"], c["summary"]))
+            row: tuple[str, ...] = (key, status, itype, c["story_points"], assignee, reporter, c["created"], c["updated"], c["duedate"], c["summary"])
         else:
-            rows.append((key, status, itype, assignee, c["created"], c["updated"], c["duedate"], c["summary"]))
+            row = (key, status, itype, assignee, reporter, c["created"], c["updated"], c["duedate"], c["summary"])
+        rows.append(((str(idx),) + row) if numbered else row)
 
     def line(row: tuple[str, ...]) -> str:
         return "  ".join(_fit(cell, widths[i] if i < len(widths) else 10) for i, cell in enumerate(row)).rstrip()
 
     divider = tuple("-" * (w - 2) for w in widths)
     return "\n".join([line(header), line(divider)] + [line(r) for r in rows])
+
+
+def browse_urls(issues: list[dict[str, Any]], site: str) -> list[str]:
+    """결과 순서 그대로 browse URL 목록. 키 없는 항목은 건너뛴다."""
+    return [browse_url(site, key) for key in (it.get("key") for it in issues) if key]
+
+
+def search_page_url(site: str, jql: str) -> str:
+    """Jira 이슈 검색 화면 URL. JQL 은 그대로 넣으면 &, = 가 깨지므로 전부 인코딩."""
+    return f"https://{site}/issues/?jql={quote(jql, safe='')}"

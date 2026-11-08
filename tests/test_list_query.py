@@ -22,27 +22,48 @@ SP_FIELD = "customfield_10016"
 
 class DateClauseTest(unittest.TestCase):
     def test_shorthand(self) -> None:
-        # 7d / 24h / 2w / 1m → 상대 표현 그대로 JQL 로 (따옴표 없음)
+        # 7d / 24h / 2w → 상대 표현 그대로 JQL 로 (따옴표 없음)
         self.assertEqual(_date_clause("updated", "7d"), "updated >= -7d")
         self.assertEqual(_date_clause("updated", "24h"), "updated >= -24h")
         self.assertEqual(_date_clause("created", "2w"), "created >= -2w")
-        self.assertEqual(_date_clause("created", "1m"), "created >= -1m")
+        # 1m은 한 달. JQL에서 소문자 m은 분이라 M으로 바꾼다.
+        self.assertEqual(_date_clause("created", "1m"), 'created >= startOfDay("-1M")')
+        self.assertEqual(_date_clause("updated", "3m"), 'updated >= startOfDay("-3M")')
 
     def test_plain_date_means_since(self) -> None:
         self.assertEqual(_date_clause("updated", "2026-05-15"), 'updated >= "2026-05-15"')
 
     def test_comparison_operators(self) -> None:
-        self.assertEqual(_date_clause("updated", "<=2026-04-01"), 'updated <= "2026-04-01"')
+        # created/updated는 datetime이라 "<= 날짜"는 그 날 하루 전체를 포함해야 한다.
+        self.assertEqual(_date_clause("updated", "<=2026-04-01"), 'updated < "2026-04-02"')
         self.assertEqual(_date_clause("updated", "<2026-04-01"), 'updated < "2026-04-01"')
         self.assertEqual(_date_clause("created", ">=2026-04-01"), 'created >= "2026-04-01"')
-        self.assertEqual(_date_clause("created", ">2026-04-01"), 'created > "2026-04-01"')
+        # "> 날짜"는 그 날 하루 전체를 제외한다.
+        self.assertEqual(_date_clause("created", ">2026-04-01"), 'created >= "2026-04-02"')
         # 연산자와 날짜 사이 공백 허용
-        self.assertEqual(_date_clause("updated", "<= 2026-04-01"), 'updated <= "2026-04-01"')
+        self.assertEqual(_date_clause("updated", "<= 2026-04-01"), 'updated < "2026-04-02"')
+        # 월말·연말 경계
+        self.assertEqual(_date_clause("updated", "<=2026-12-31"), 'updated < "2027-01-01"')
 
     def test_range_both_separators(self) -> None:
-        expected = 'updated >= "2026-05-01" AND updated <= "2026-05-15"'
+        # 끝 날짜(15일) 하루 전체를 포함한다.
+        expected = 'updated >= "2026-05-01" AND updated < "2026-05-16"'
         self.assertEqual(_date_clause("updated", "2026-05-01..2026-05-15"), expected)
         self.assertEqual(_date_clause("updated", "2026-05-01~2026-05-15"), expected)
+
+    def test_day_after_max_date_is_query_error(self) -> None:
+        # 9999-12-31 의 다음 날은 표현할 수 없다. OverflowError 트레이스백이 아니라 QueryError.
+        for value in ["<=9999-12-31", ">9999-12-31", "2026-01-01..9999-12-31"]:
+            with self.subTest(value=value):
+                with self.assertRaises(QueryError):
+                    _date_clause("updated", value)
+
+    def test_impossible_calendar_dates_rejected_cleanly(self) -> None:
+        # 정규식은 통과하지만 달력에 없는 날짜. 스택트레이스가 아니라 QueryError여야 한다.
+        for value in ["<=2026-02-30", ">2026-13-01", "2026-04-01..2026-04-31", "2026-02-30", "<2026-02-30"]:
+            with self.subTest(value=value):
+                with self.assertRaises(QueryError):
+                    _date_clause("updated", value)
 
     def test_range_start_after_end_rejected(self) -> None:
         with self.assertRaises(QueryError) as ctx:
@@ -66,6 +87,13 @@ class DueClauseTest(unittest.TestCase):
     def test_exact_date_is_equality(self) -> None:
         # updated/created 와 의도적으로 다름 — 기한은 '그 날짜' 정확 일치.
         self.assertEqual(_due_clause("2026-06-15"), 'duedate = "2026-06-15"')
+
+    def test_impossible_calendar_dates_rejected(self) -> None:
+        # 범위 형태만 검증하던 것을 단일 날짜·비교 형태에도 맞춘다.
+        for value in ["2026-02-30", "<=2026-02-30", ">2026-13-01", "2026-02-01..2026-02-30"]:
+            with self.subTest(value=value):
+                with self.assertRaises(QueryError):
+                    _due_clause(value)
 
     def test_comparison_and_range(self) -> None:
         self.assertEqual(_due_clause("<=2026-06-15"), 'duedate <= "2026-06-15"')
@@ -109,6 +137,23 @@ class BuildJqlTest(unittest.TestCase):
         self.assertEqual(
             jql, "project = WL AND assignee = currentUser() ORDER BY updated DESC"
         )
+
+    def test_reporter_uses_same_rules_as_assignee(self) -> None:
+        jql = build_jql(ListFilters(reporter="me"), default_project="WL")
+        self.assertEqual(
+            jql, "project = WL AND reporter = currentUser() ORDER BY updated DESC"
+        )
+        jql = build_jql(ListFilters(reporter="a@b.com"), default_project="WL")
+        self.assertIn('reporter = "a@b.com"', jql)
+
+    def test_assignee_and_reporter_combine(self) -> None:
+        jql = build_jql(ListFilters(assignee="me", reporter="a@b.com"), default_project="WL")
+        self.assertIn('assignee = currentUser() AND reporter = "a@b.com"', jql)
+
+    def test_reporter_rejects_korean_name(self) -> None:
+        with self.assertRaises(QueryError) as cm:
+            build_jql(ListFilters(reporter="강민성"), default_project="WL")
+        self.assertIn("reporter 값 형식 미지원", str(cm.exception))
 
     def test_multiple_projects_use_in(self) -> None:
         jql = build_jql(ListFilters(projects=("wl", "ABC")), default_project="ZZ")
