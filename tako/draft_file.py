@@ -3,8 +3,8 @@
 포맷: YAML frontmatter(필드) + 마크다운 본문. git commit 편집과 같은 멘탈 모델.
 파일을 저장하고 닫으면 다시 파싱 → 검증 → 미리보기로 돌아온다.
 
-이슈 유형은 여기 안 실린다 — 생성 후에도 못 바꾸는 필드라 초안에서도 잠근다.
-파일에 issue_type 키가 보이면 파싱 단계에서 거부한다.
+이슈 유형은 여기 안 실린다. 유형은 초안 밖에서 정하고, 생성 후에 바꾸는 일은
+tako retype 이 맡는다. 파일에 issue_type 키가 보이면 파싱 단계에서 거부한다.
 """
 
 from __future__ import annotations
@@ -134,7 +134,7 @@ def parse_draft(text: str) -> tuple[dict[str, Any], str]:
         raise DraftFileError("frontmatter 는 '키: 값' 매핑이어야 함.")
 
     if "issue_type" in fields:
-        raise DraftFileError("이슈 유형은 초안에서 못 바꾼다 (생성 후에도 변경 불가). issue_type 줄 삭제 필요.")
+        raise DraftFileError("이슈 유형은 초안에서 못 바꾼다. issue_type 줄 삭제 필요 (생성 후 변경은 tako retype).")
     unknown = [k for k in fields if k not in EDITABLE_KEYS]
     if unknown:
         raise DraftFileError(
