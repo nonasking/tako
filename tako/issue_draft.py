@@ -219,5 +219,5 @@ def render_preview(draft: IssueDraft) -> str:
     lines.append("본문:")
     lines.extend(f"  {body_line}" for body_line in draft.description.splitlines() or [""])
     lines.append("-" * 60)
-    lines.append("이슈 유형은 생성 후 변경 불가.")
+    lines.append("이슈 유형은 생성 후 같은 계층 안에서만 변경 가능 (tako retype).")
     return "\n".join(lines)

@@ -20,7 +20,7 @@ flowchart TD
     MAIN --> PROMPT["prompts.py — TTY input<br/>(asks only for what the args left blank)"]
 
     PROMPT --> BUILD
-    MAIN --> BUILD["issue_draft.py — IssueDraft → build_payload / render_preview<br/>list_query.py — filters → JQL · guide.py · fields.py"]
+    MAIN --> BUILD["issue_draft.py — IssueDraft → build_payload / render_preview<br/>draft_file.py — editor round-trip (frontmatter + markdown)<br/>list_query.py — filters → JQL · guide.py · fields.py"]
     BUILD --> PREVIEW{"preview → confirm (Y/n)<br/>--yes skips"}
     PREVIEW -->|"n"| CANCEL["cancel — exit 1, no REST call"]
     PREVIEW -->|"Y"| CLIENT
@@ -28,7 +28,7 @@ flowchart TD
     CFG --> CLIENT["jira_client.py<br/>one requests.Session (reused)<br/>retries: unsent requests · 429 (Retry-After) · idempotent-only otherwise<br/>_format_error → 401 / 403 / 400·422 / 429 / 5xx"]
     AUTH --> CLIENT
     CLIENT <--> ADF["markdown ↔ ADF<br/>md-to-adf · adf_to_md.py"]
-    CLIENT --> REST["Jira Cloud REST v3<br/>POST /issue · POST /search/jql · GET·PUT /issue/&lt;key&gt;<br/>/issue/&lt;key&gt;/editmeta · /myself · /user/search<br/>/mypermissions · /field · /issueLink"]
+    CLIENT --> REST["Jira Cloud REST v3<br/>POST /issue · POST /search/jql · GET·PUT /issue/&lt;key&gt;<br/>/issue/&lt;key&gt;/editmeta · /issue/&lt;key&gt;/comment<br/>/myself · /user/search · /mypermissions · /field · /issueLink"]
     REST --> OUT["issue key + URL (clipboard.py auto-copy)<br/>· text table · JSON · CSV"]
 ```
 
@@ -57,7 +57,7 @@ uv tool install takopy     # if you have uv
 pipx install takopy        # if you have pipx
 ```
 
-Re-running any of the three upgrades an existing install.
+To upgrade later, re-run the `curl … | bash` line (it reinstalls with `uv tool install --force`, which picks up the latest release). With uv or pipx directly, use `uv tool upgrade takopy` / `pipx upgrade takopy` — re-running the plain `install` keeps the version you already have.
 
 <details>
 <summary>From source (for working on tako itself)</summary>
@@ -75,7 +75,7 @@ pip install -e .
 tako init
 ```
 
-Enter 5 items (site domain / default project / default issue type / email / API token) and two files are created:
+Enter 5 items (site domain / default project / default issue type / email / API token), plus an optional default assignee, and two files are created:
 
 - `~/.config/tako/config.yaml` — site·project·issue types
 - `~/.config/tako/credentials.json` — email·token (chmod 0600)
@@ -86,6 +86,15 @@ Forget to run it? Any command that needs config will offer to run `tako init` fo
 
 To write the files by hand instead, see [`config.example.yaml`](./config.example.yaml).
 
+Keeping them somewhere else? Every path follows the same rule — command-line option > environment variable > default:
+
+| File | Option (before the subcommand) | Environment variable |
+|---|---|---|
+| config | `tako --config <path> …` | `TAKO_CONFIG_PATH` |
+| credentials | `tako --credentials <path> …` | `TAKO_CREDENTIALS_PATH` |
+| body guide | — | `TAKO_GUIDE_PATH` |
+| slash-command install dir | — | `TAKO_COMMANDS_DIR` |
+
 ## Slash commands (optional)
 
 Only needed for Claude Code session-context mode:
@@ -94,6 +103,7 @@ Only needed for Claude Code session-context mode:
 tako slash install          # copies /tako, /tako-read, … into ~/.claude/commands/
 tako slash install --force  # refresh them after upgrading tako
 tako slash list             # show what ships with the package
+tako slash path             # print the install target (~/.claude/commands/ unless TAKO_COMMANDS_DIR is set)
 ```
 
 Existing files are left alone unless you pass `--force`, so local edits survive. Restart Claude Code afterwards.
@@ -107,25 +117,28 @@ If you cloned the repo and want to *edit* the commands, run `./install.sh` inste
 ```bash
 # interactive (recommended) — prompts in order, like this
 tako new
-#  Project key [WL]:
-#  Issue type (Task / 기능변경 / 버그수정) [기능변경]:
-#  Summary: ...
-#  Body (markdown) (Ctrl+D to end): ...
-#  Parent (alias/key, Enter for none):
-#  Assignee (me / email / accountId, Enter for none):
-#  Story points (integer, Enter for none):
-#  Due date YYYY-MM-DD (Enter for none):
-#  Tickets to link (KEY[:TYPE], comma-separated, Enter for none):
-#  → preview → create in Jira? (Y/n/e=edit)
+#  프로젝트 키 [WL]:                                         project key
+#  이슈 유형 (Task / 기능변경 / 버그수정) [기능변경]:        issue type
+#  제목: ...                                                 summary
+#  본문(마크다운) (Ctrl+D 로 종료)                           body, end with Ctrl+D
+#  부모 (별칭/키, 없으면 Enter):                             parent (alias or key)
+#  담당자 (me / 이메일 / accountId, 없으면 Enter):           assignee
+#  스토리포인트 (정수, 없으면 Enter):                        story points
+#  기한 YYYY-MM-DD (없으면 Enter):                           due date
+#  연결할 티켓 (KEY[:TYPE], 쉼표로 여러 개, 없으면 Enter):   tickets to link, comma-separated
+#  → preview → Jira 에 생성? (Y/n/e=편집):                   create in Jira? (e = edit)
 
 # pre-specify some of it
-tako new --project WL --issue-type 기능변경 --assignee me
+tako new --project WL --issue-type 기능변경 --assignee me --label backend
 
 # skip the question relay — write the draft in your editor from the start
 tako new --edit
 
 # create from a draft file (YAML frontmatter + markdown body)
 tako new --draft-file my-draft.md --issue-type 기능변경
+
+# preview a draft file without creating anything
+tako preview --draft-file my-draft.md --issue-type 기능변경
 
 # create a sub-task — parent key + the site's sub-task issue-type name
 tako new --project WL --issue-type 하위작업 --parent WL-9058 \
@@ -143,6 +156,7 @@ tako new \
 ## Expected
 sort is applied" \
   --assignee jy@example.com \
+  --label backend \
   --story-points 3 \
   --duedate 2026-06-15 \
   --link WL-100 \
@@ -150,7 +164,11 @@ sort is applied" \
   --yes
 ```
 
-`--assignee` / `--reporter` / `--story-points` / `--duedate` / `--link` are optional. In interactive mode, leaving the input blank also skips them — except `--reporter`, which interactive mode never asks about (see below).
+Prompts and messages are in Korean (the right-hand column above is a gloss, not part of the output).
+
+`--assignee` / `--reporter` / `--label` / `--story-points` / `--duedate` / `--link` are optional. In interactive mode, leaving the input blank also skips them. Two are never asked about: `--label` (repeatable — pass it as an argument, or add `labels:` in the `e` edit round) and `--reporter` (see below).
+
+`--edit` needs a terminal. Outside one (scripts, slash commands), `--draft-file` requires `--yes` — confirming is then the caller's job, so a stray line on stdin can never create a ticket.
 
 `--assignee` accepts `me` (yourself, one `/myself` call), an email (one `/user/search` call, only an exact single match is allowed), or an accountId directly. Korean names/nicknames are unsupported in v1.x. Email search may be blocked depending on the site's GDPR settings — work around it by entering the accountId directly. Setting `jira.default_assignee` in config to 'me'/email/accountId applies it as the default in interactive blank-input / auto mode where `--assignee` is omitted.
 
@@ -181,7 +199,7 @@ tako fields set story_points customfield_10016
 
 Flow: input → preview → Y/n/e → REST → key + links. No Claude Code needed.
 
-At the preview confirmation, answering `e` opens the draft in your editor as a file — YAML frontmatter for the fields, markdown body below — so multi-line fixes don't mean retyping everything. Save and close to get a fresh preview; broken edits reopen the same file instead of losing your work. The frontmatter accepts `project, summary, parent, labels, assignee, reporter, story_points, duedate, links`. The issue type is deliberately *not* editable there (it can't be changed after creation either) — pass it via `--issue-type`. The editor is resolved as config `editor:` → `$EDITOR` → `$VISUAL` → `vi`; commands with arguments work (`editor: code --wait`).
+At the preview confirmation, answering `e` opens the draft in your editor as a file — YAML frontmatter for the fields, markdown body below — so multi-line fixes don't mean retyping everything. Save and close to get a fresh preview; broken edits reopen the same file instead of losing your work. The frontmatter accepts `project, summary, parent, labels, assignee, reporter, story_points, duedate, links`. The issue type is deliberately *not* editable there — pass it via `--issue-type` (to change it after creation, see [`tako retype`](#f-change-an-existing-tickets-issue-type-tako-retype--tako-retype)). The editor is resolved as config `editor:` → `$EDITOR` → `$VISUAL` → `vi`; commands with arguments work (`editor: code --wait`).
 
 Right after creation, the ticket URL is auto-copied to the system clipboard (macOS `pbcopy` / Linux `xclip` or `xsel`). Turn it off with `jira.auto_copy_url: false` in config. In environments without those tools it's silently skipped — creation itself is unaffected.
 
@@ -194,7 +212,7 @@ Right after creation, the ticket URL is auto-copied to the system clipboard (mac
 
 The LLM summarizes the session → preview → after confirmation calls `tako new`. With no session context, mode A is lighter.
 
-The body candidate is designed to *always include two sections at the very top* — `[내가 한 일]` (what I did) and `[현재 상태/결론]` (current state/conclusion). Optional sections like background/impact go below as needed. If the self-check step finds either section missing, the preview warns (it doesn't auto-fix — the user decides).
+With the default body guide, the body candidate *always opens with two sections* — `[내가 한 일]` (what I did) and `[현재 상태/결론]` (current state/conclusion). Optional sections like background/impact go below as needed. If the self-check step finds either section missing, the preview warns (it doesn't auto-fix — the user decides). These rules come from the guide file, so you can change them — see [H](#h-customize-the-body-writing-guide-tako-guide--tako-guide).
 
 > Creating a sub-task requires *the site's sub-task type name to be registered* under `issue_types` in your `~/.config/tako/config.yaml` (e.g. `하위작업`, `Sub-task`, `서브태스크`). Without it, `tako new` rejects it as a "disallowed issue type".
 
@@ -230,7 +248,7 @@ tako show https://<site>/browse/WL-8876   # a URL is fine too
 tako show WL-8876 --max-comments 0 # exclude comments
 ```
 
-`tako show` handles authentication and the REST call either way. The **text** output also converts the body and comments from ADF→markdown and lists the parent, sub-tasks, linked issues, and recent comments; `--json` is Jira's raw response, so `fields.description` stays an ADF tree there.
+`tako show` handles authentication and the REST call either way. The **text** output also converts the body and comments from ADF→markdown and lists the parent, sub-tasks, linked issues, and recent comments. `--json` wraps Jira's raw responses as `{"issue": …, "comments": […], "url": …}`, so the body stays an ADF tree at `issue.fields.description`.
 
 > Sensitive-data caution: the ticket body is exposed to the session, so use carefully with tickets containing tokens/passwords (no auto-filtering in v1.x).
 
@@ -243,15 +261,19 @@ tako show WL-8876 --max-comments 0 # exclude comments
 *Appends* the session's work to the ticket body (default). The LLM turns session context → an auto-written section → preview → Y/n → REST. Directly from the shell:
 
 ```bash
-# default append — adds a '## Update (YYYY-MM-DD)' section at the end of the body
+# default append — adds a '## 업데이트 (YYYY-MM-DD)' section (KST date) at the end of the body
 tako update WL-8876 --body "$(cat <<'BODY'
 - work item 1
 - work item 2
 BODY
 )" --yes
 
-# name the section
+# name the section → '## Progress (YYYY-MM-DD)'
 tako update WL-8876 --section "Progress" --body "..."
+
+# body from stdin — piped input needs --yes, since the pipe leaves nothing to answer the
+# confirmation with (at a terminal, omit --body, type the body and end with Ctrl+D instead)
+git log --oneline -5 | tako update WL-8876 --yes
 
 # replace the whole body (dangerous — review carefully in the preview)
 tako update WL-8876 --mode overwrite --body "..."
@@ -263,11 +285,33 @@ tako update WL-8876 --summary "replace with a new title"
 tako update WL-8876 --summary "new title" --body "..." --mode overwrite
 ```
 
-At least *one* of `--summary` and `--body` is required. `--mode` affects *only the body* — the title is always replaced.
+At least *one* of `--summary` and the body is required. Without `--body`, the body is read from stdin — unless `--summary` is given, in which case only the title changes. `--mode` affects *only the body* — the title is always replaced.
 
 > Both body and title are *permanent records*, so beware of sensitive data and mistakes. Always review at the preview step.
 
-### F) List/filter tickets (`tako list` / `/tako-list`)
+### F) Change an existing ticket's issue type (`tako retype` / `/tako-retype`)
+
+```bash
+tako retype WL-8876 Story                          # new type as a positional arg
+tako retype WL-8876 --to 기능변경                    # same thing, as an option
+tako retype https://<site>/browse/WL-8876 Story --yes   # a URL works too; --yes skips the confirmation
+```
+
+Inside Claude Code, say it in your own words — no session context needed:
+
+```
+/tako-retype WL-8876 Story
+/tako-retype WL-8876 was a story, not a task
+```
+
+Before asking, `tako retype` reads the issue's edit metadata (`/editmeta`) and accepts only the types Jira allows for *that* issue — names match case-insensitively, and a type id works too. Your config's `issue_types` doesn't restrict this; Jira's list is the source of truth. If the type isn't allowed, it prints the ones you can pick.
+
+- Only conversions *within the same level* work (standard ↔ standard, e.g. Task → Story). Crossing levels (sub-task ↔ standard) needs Jira's *Move* in the UI — tako doesn't do it.
+- Already that type → it says so and exits 0 without a REST write.
+- The new type's workflow or required fields can still reject the change; Jira's message is shown as-is.
+- After the change it reads the issue back. If the type that stuck differs from the request (workflow/screen settings), it warns and exits 2.
+
+### G) List/filter tickets (`tako list` / `/tako-list`)
 
 ```bash
 # my tickets (config.default_project + yourself, automatically)
@@ -302,7 +346,9 @@ tako list --parent WL-9200 --open-each      # one tab per ticket (asks first abo
 (`my-issues.csv` → `my-issues-2026-08-03_142530.csv`) and the path actually written is printed to stderr.
 Missing parent directories are created. Note that a shell redirect (`>`) is your shell's job, so it still truncates.
 
-Supported args: `--assignee` / `--reporter` (me / email / accountId), `--project` (repeatable, query multiple projects at once), `--status` (repeatable), `--type` (repeatable), `--parent`, `--label` (repeatable), `--updated` / `--created` (`7d`/`1w`/`YYYY-MM-DD` / comparisons like `<=YYYY-MM-DD` / `YYYY-MM-DD..YYYY-MM-DD` range), `--due` (`overdue` / `none` / `set` / `YYYY-MM-DD` / `<=YYYY-MM-DD` etc. / range), `--sp` (integer / `>=N` / `<=N` / `none` / `set`), `--query`, `--jql`, `--limit` (default 20 — caps total results, auto-paging past 100), `--all` (fetch everything, ignores `--limit`), `--json`, `--csv`, `--output / -o`, `--open` (Jira search page in one tab), `--open-each` (one tab per ticket, confirm above 20), `--wizard / -i` (interactive input).
+Supported args: `--assignee` / `--reporter` (me / email / accountId), `--project` (repeatable, query multiple projects at once), `--status` (repeatable), `--type` (repeatable), `--parent`, `--label` (repeatable), `--updated` / `--created` (shorthand `24h` / `7d` / `2w` / `1m` / `YYYY-MM-DD` / comparisons like `<=YYYY-MM-DD` / `YYYY-MM-DD..YYYY-MM-DD` range), `--due` (`overdue` / `none` / `set` / `YYYY-MM-DD` / `<=YYYY-MM-DD` etc. / range), `--sp` (integer / `>=N` / `<=N` / `>N` / `<N` / `none` / `set`; `--due` and `--sp` also take `empty` as an alias of `none`), `--query`, `--jql`, `--limit` (default 20 — caps total results, auto-paging past 100), `--all` (fetch everything, ignores `--limit`), `--json`, `--csv`, `--output / -o`, `--open` (Jira search page in one tab), `--open-each` (one tab per ticket, confirm above 20), `--wizard / -i` (interactive input).
+
+The *shorthand* for `--updated` / `--created` counts back from now: `h` hours, `d` days, `w` weeks, `m` **months** — unlike raw JQL, where `-1m` means one minute. `1m` starts at 00:00 on the day one month ago.
 
 The *range* form for `--updated` / `--created` / `--due` is `YYYY-MM-DD..YYYY-MM-DD` or `YYYY-MM-DD~YYYY-MM-DD` (alias), both endpoints inclusive. It can't be mixed with shorthand (`7d`). If the start is later than the end, it's rejected.
 
@@ -340,7 +386,7 @@ tako list -i  # answering "Project: 전체", "Max: 전체" in interactive mode d
 
 `--all` auto-repeats every page (100 max per page). Beware large result sets — 943 issues span about 10 pages. A `--limit` above 100 also pages automatically, but stops at the cap (e.g. `--limit 250` → 3 requests, 250 rows).
 
-Default columns: `key, status, type, assignee, reporter, created, updated, duedate, summary, parent, url`. If your config has a `jira.fields.story_points` mapping, a `story_points` column is auto-added right after `type`. Without the mapping, SP filter/column are disabled with a notice.
+CSV columns: `key, status, type, assignee, reporter, created, updated, duedate, summary, parent, url`. The text table shows the same minus `parent` and `url`. If your config has a `jira.fields.story_points` mapping, a `story_points` column (`SP` in the table) is auto-added right after `type`. Without the mapping, SP filter/column are disabled with a notice.
 
 ```bash
 # due / SP filter examples
@@ -365,7 +411,7 @@ Claude Code slash commands do *natural language → arg mapping*:
 
 > Assignee / reporter by *Korean name* is unsupported in v1.x. Only `me` / email / accountId.
 
-### G) Customize the body-writing guide (`tako guide` / `/tako-guide`)
+### H) Customize the body-writing guide (`tako guide` / `/tako-guide`)
 
 The *rules* by which `/tako` and `/tako-update` write the title and body are set by a single **personal guide file** — `~/.config/tako/body_guide.md`. Title format, required sections, writing tone (plain language a non-engineer PM can follow, no pasted code, etc.), and self-check items all live in this file, and the slash commands read it before writing the body and follow it exactly.
 
@@ -374,7 +420,7 @@ If the file doesn't exist, a **default guide** (bundled with the package) applie
 ```bash
 tako guide show      # print the currently applied guide (default if no personal file)
 tako guide path      # print the personal guide path
-tako guide init      # create the personal file from the default → edit in your editor
+tako guide init      # copy the default into the personal file, then edit it yourself (--force overwrites)
 tako guide reset     # revert the personal guide to the default
 ```
 
@@ -403,7 +449,7 @@ echo '{"summary":"x","description":"y"}' | tako build
 tako interactive
 ```
 
-Only `new` / `fields detect` make actual REST calls. The rest is local processing.
+These never call Jira — they only read your config. `tako preview --draft-file` is local in the same way, so it marks `me` / email values as unresolved rather than looking them up. Of the other commands, `init`, `guide`, `slash`, and `fields set` are local too; `new`, `list`, `show`, `update`, `retype`, and `fields detect` make REST calls.
 
 ## Design — why a CLI + thin skill instead of the Jira MCP
 
@@ -452,6 +498,7 @@ tako/
 │   ├── jira_client.py       REST client (session reuse, retry policy) + md→ADF entry
 │   ├── adf_to_md.py         ADF → markdown
 │   ├── issue_draft.py       payload builder + preview
+│   ├── draft_file.py        draft file (YAML frontmatter + markdown) — editor round-trip
 │   ├── list_query.py        list filters → JQL clauses
 │   ├── list_output.py       list formatters — CSV / width-aware text table
 │   ├── patterns.py          shared issue-key / browse-URL / accountId / "me" patterns
@@ -480,7 +527,7 @@ python -m unittest discover -s tests -v    # all
 python -m unittest tests.test_list_query   # a single module
 ```
 
-Covers the pure logic: JQL building (`test_list_query.py` — shorthand/comparison/range dates, calendar-invalid and out-of-range dates, due, story points, escaping), config validation messages (`test_config.py`), REST error mapping, the retry policy, and the ADF conversion boundary (`test_jira_client.py`), ADF → markdown rendering for `show` — panels, tables, task lists, inline nodes, schema-violating values (`test_adf_to_md.py`), the regressions pinned after review — `update` keeping existing ADF on append, which network failures are retried for which calls, the "may have been applied" hint (`test_review_followups.py`), list pagination / filter assembly / shell hints (`test_cmd_list.py`), CSV and width-aware table formatting (`test_list_output.py`), prompt EOF handling (`test_prompts.py`), issue-type matching for `retype` (`test_retype.py`), the body guide (`test_guide.py`), the sub-task/link lines of `show` (`test_show_render.py`), the reporter path — payload, preview, and the permission pre-check (`test_reporter.py`), the `new` flow — arg → payload assembly, `--draft-file` conflicts, assignee/reporter resolution order (`test_cmd_new.py`), the `fields detect` hint pointing at the config actually in use (`test_cmd_fields.py`), and `--output` path handling — never overwrite, timestamp placement, parent-dir creation (`test_list_output_path.py`). Two more guard the install path: the first-run contract — never prompt when stdin isn't a TTY, and never point at a file only a repo checkout would have (`test_first_run.py`), and slash-command installation — packaging completeness, skip-unless-forced, dangling-symlink repair (`test_slash.py`).
+Covers the pure logic: JQL building (`test_list_query.py` — shorthand/comparison/range dates, calendar-invalid and out-of-range dates, due, story points, escaping), config validation messages (`test_config.py`), REST error mapping, the retry policy, and the ADF conversion boundary (`test_jira_client.py`), ADF → markdown rendering for `show` — panels, tables, task lists, inline nodes, schema-violating values (`test_adf_to_md.py`), the regressions pinned after review — `update` keeping existing ADF on append, which network failures are retried for which calls, the "may have been applied" hint (`test_review_followups.py`), list pagination / filter assembly / shell hints (`test_cmd_list.py`), CSV and width-aware table formatting (`test_list_output.py`), prompt EOF handling (`test_prompts.py`), issue-type matching for `retype` (`test_retype.py`), the body guide (`test_guide.py`), the sub-task/link lines of `show` (`test_show_render.py`), the reporter path — payload, preview, and the permission pre-check (`test_reporter.py`), the `new` flow — arg → payload assembly, `--draft-file` conflicts, assignee/reporter resolution order (`test_cmd_new.py`), the draft-file round-trip — an untouched save keeps everything, a bad edit fails with an error instead of vanishing (`test_draft_file.py`), top-level error handling — unexpected exceptions print the version and the issue-report URL, exit codes and a closed pipe pass through (`test_run_errors.py`), the `fields detect` hint pointing at the config actually in use (`test_cmd_fields.py`), and `--output` path handling — never overwrite, timestamp placement, parent-dir creation (`test_list_output_path.py`). Two more guard the install path: the first-run contract — never prompt when stdin isn't a TTY, and never point at a file only a repo checkout would have (`test_first_run.py`), and slash-command installation — packaging completeness, skip-unless-forced, dangling-symlink repair (`test_slash.py`).
 
 ## Releasing
 

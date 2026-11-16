@@ -148,7 +148,7 @@ stdout 에 나온 미리보기를 그대로 사용자에게 노출한다.
    <마크다운 본문 그대로>
    ```
 
-   frontmatter 에 쓸 수 있는 키: `project, summary, parent, labels, assignee, reporter, story_points, duedate, links`. **`issue_type` 은 넣지 않는다** — 생성 후에도 변경 불가라 초안에서도 잠겨 있고, 넣으면 `tako` 가 거부한다. 이슈 유형은 4번 호출 시 `--issue-type` 인자로 전달.
+   frontmatter 에 쓸 수 있는 키: `project, summary, parent, labels, assignee, reporter, story_points, duedate, links`. **`issue_type` 은 넣지 않는다.** 초안에서는 잠겨 있어서 넣으면 `tako` 가 거부한다. 이슈 유형은 4번 호출 시 `--issue-type` 인자로 전달한다. 만든 뒤에 유형을 바꾸려면 `/tako-retype` 을 쓴다.
 
 2. 파일 경로를 사용자에게 알려주고 편집을 기다린다. 다 고쳤다는 답을 받으면 미리보기를 다시 만든다:
 
